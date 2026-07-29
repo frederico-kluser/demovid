@@ -1,5 +1,5 @@
 title: Painel de Exames
-url: file:///home/ondokai/Projects/demovid/examples/app.html
+url: ./app.html            # relativo ao próprio YAML
 locale: pt-BR
 preset: boardroom
 

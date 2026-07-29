@@ -18,7 +18,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE"
   ],
   "engines": {
     "node": ">=20"
@@ -63,5 +64,13 @@
     "motion": "^12.43.0",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/frederico-kluser/demovid.git"
+  },
+  "bugs": {
+    "url": "https://github.com/frederico-kluser/demovid/issues"
+  },
+  "homepage": "https://github.com/frederico-kluser/demovid#readme"
 }

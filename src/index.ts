@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import "./env.js"; // MUST be first — see src/env.ts
 import { readFile } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { parse as parseYaml } from "yaml";
 import { doctor } from "./doctor.js";
@@ -55,10 +56,21 @@ const NOT_YET: Record<string, string> = {
   refine: "src/openai/script.ts",
 };
 
-/** Carrega e valida um demo.yaml. Erros do zod já nomeiam o passo culpado. */
+/**
+ * Carrega e valida um demo.yaml. Erros do zod já nomeiam o passo culpado.
+ *
+ * `url` relativa resolve contra o diretório do YAML, não contra o cwd. Sem isso
+ * um storyboard só funciona da pasta de onde foi escrito — e um caminho absoluto
+ * cravado no arquivo o torna intransferível entre máquinas.
+ */
 async function loadStoryboard(path: string): Promise<ReturnType<typeof parseStoryboard>> {
-  const raw = await readFile(resolve(path), "utf8");
-  return parseStoryboard(parseYaml(raw));
+  const file = resolve(path);
+  const raw = await readFile(file, "utf8");
+  const sb = parseStoryboard(parseYaml(raw));
+  if (!/^[a-z]+:\/\//i.test(sb.url)) {
+    sb.url = pathToFileURL(resolve(dirname(file), sb.url)).href;
+  }
+  return sb;
 }
 
 async function runRecord(path: string, rehearse: boolean, out: string | undefined): Promise<number> {

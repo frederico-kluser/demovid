@@ -158,8 +158,20 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
   const steps: StepReport[] = [];
   let cameraRung: "R1" | "R3" = "R1";
 
+  // Uma morte do browser aparecia como "Target page … has been closed" no passo
+  // SEGUINTE, fazendo depurar o passo errado. Registrar a causa quando ela
+  // acontece, e checar antes de cada passo, transforma isso numa mensagem única
+  // e no lugar certo. (Vi duas falhas assim, não consegui reproduzir; a causa
+  // continua desconhecida — o que dá para garantir é o diagnóstico.)
+  let died: string | null = null;
+
   try {
     const page = browser.page;
+    page.on("crash", () => (died ??= "a página crashou (out-of-memory ou o renderer morreu)"));
+    page.on("close", () => (died ??= "a página foi fechada"));
+    browser.ctx.on("close", () => (died ??= "o contexto do browser foi fechado"));
+    page.on("pageerror", (e) => log(`erro na página: ${e.message.slice(0, 200)}`));
+
     await page.goto(sb.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.waitForLoadState("load", { timeout: 30_000 }).catch(() => {
       warnings.push("a página não chegou a `load` em 30s — seguindo com o que carregou");
@@ -204,6 +216,7 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
       const t0 = Date.now();
       const report: StepReport = { index: i, action: step.action, target: step.target, ok: true, ms: 0 };
       try {
+        if (died) throw new Error(`o browser morreu antes deste passo: ${died}`);
         await runStep(page, step, preset, clipsByStep[i] ?? [], cameraRung, log);
       } catch (err) {
         report.ok = false;
@@ -218,13 +231,19 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
 
     // Land the camera and clear the overlay before the final frames, so the
     // video does not end mid-zoom with a balloon still up.
-    await page.evaluate(() => {
-      window.__demovid!.hush();
-      window.__demovid!.spotlightOff();
-      window.__demovid!.setCamera({ tx: 0, ty: 0, k: 1 });
-      window.__demovid!.cursorZoom(1);
-    });
-    await sleep(900);
+    if (!died) {
+      await page
+        .evaluate(() => {
+          window.__demovid!.hush();
+          window.__demovid!.spotlightOff();
+          window.__demovid!.setCamera({ tx: 0, ty: 0, k: 1 });
+          window.__demovid!.cursorZoom(1);
+        })
+        .catch(() => {});
+      await sleep(900);
+    }
+
+    if (died) warnings.push(`o browser morreu durante a gravação: ${died}`);
 
     if (recording) {
       const stopped = await recording.stop();

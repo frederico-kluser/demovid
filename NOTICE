@@ -1,0 +1,46 @@
+demovid
+Copyright 2026 Frederico Guilherme Kluser de Oliveira
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+--------------------------------------------------------------------------------
+Ideas, techniques and constants borrowed from other projects
+--------------------------------------------------------------------------------
+
+No source code from the projects below is copied into this repository. What is
+reused are published techniques and numeric constants — facts, not expression —
+and they are credited here because that is the decent thing to do.
+
+* Cap — https://github.com/CapSoftware/Cap (MIT)
+  The spring constants for the camera and cursor come from its
+  `crates/project/src/configuration.rs`: stiffness/damping/mass triples for the
+  screen-movement spring and the four cursor animation styles, the 500 ms click
+  look-ahead, the contract-to-80%-over-130 ms click feedback, the 0.25 edge-snap
+  ratio and the click-cluster box ratios. See `scripts/bake-springs.ts`.
+
+* driver.js — https://github.com/nilbuild/driver.js (MIT)
+  The spotlight technique: an SVG path with a cut-out and `fill-rule: evenodd`,
+  rather than a large `box-shadow`. Reimplemented in `overlay/src/spotlight.ts`.
+
+* ghost-cursor — https://github.com/Xetera/ghost-cursor (MIT)
+  Fitts's-Law travel timing for the synthetic cursor. Its randomised jitter and
+  in-target offset are deliberately NOT used: those exist to defeat bot
+  detection, which is the opposite of what a demo needs.
+
+* Screenity — https://github.com/alyssaxuu/screenity (GPL-3.0)
+  Read for reference only. Two of its published constants informed defaults, and
+  two of its bugs are deliberately avoided (documented in
+  `overlay/src/cursor.ts`). No code from it is present here.
+
+* shot-scraper — https://github.com/simonw/shot-scraper (Apache-2.0)
+  The shape of its storyboard action vocabulary.
+
+--------------------------------------------------------------------------------
+Runtime dependencies invoked as subprocesses
+--------------------------------------------------------------------------------
+
+* gpu-screen-recorder (GPL-3.0-only) — invoked as a subprocess via the `rec`
+  wrapper. It is never linked against, and no GPL code is included here.
+
+* ffmpeg / ffprobe — invoked as subprocesses for audio trimming, loudness
+  normalisation and container inspection.
