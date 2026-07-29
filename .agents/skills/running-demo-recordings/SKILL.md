@@ -20,8 +20,34 @@ demovid rehearse examples/demo.yaml  # 2. validate selectors + camera, record no
 demovid record   examples/demo.yaml  # 3. → MP4
 ```
 
-`script` and `refine` (having an agent draft and revise the storyboard) are **not implemented**.
-Write the YAML by hand; `rehearse` validates it.
+Or the guided flow, which does all three and writes the storyboard for you — run it *inside* the
+target project (`src/scriptflow.ts@b4f9175`, dispatched at `src/index.ts:387@b4f9175`):
+
+```bash
+cd ~/the-app && demovid                       # interactive: it asks, in Portuguese
+demovid script ~/the-app --about "..." --yes  # non-interactive
+```
+
+There is no `refine` **command**: revision happens at the guided flow's approval gate, where typing
+what to change (instead of Enter) re-drafts and re-rehearses. There is no `voice` command either.
+
+### Silent output: `--format gif` / `--format webp`
+
+A different product, not the MP4 muted (`src/gif.ts@b4f9175`):
+
+```bash
+demovid record demo.yaml --format gif             # → demo.gif, ≤ 5 MB, zero TTS calls
+demovid record demo.yaml --format webp --max-mb 2
+```
+
+- **No `OPENAI_API_KEY` is needed to record one** — synthesis is skipped, not muted, so a
+  hand-written storyboard renders with no API access at all. The key is still needed to *write* a
+  storyboard.
+- The balloon is the only channel, so it reads the step's `caption` (falling back to `say`), and the
+  `readme` preset is applied unless `--preset` says otherwise.
+- Over budget, frames are dropped 15→12→10→8→6→5 fps. If 5 fps still misses, you get the file plus a
+  warning — shorten the script or switch to `webp`, which measured ~10× smaller on the same clip.
+- No audio is captured at all in this mode, so nothing the machine happens to be playing can leak in.
 
 ## Injected knowledge
 
@@ -31,12 +57,12 @@ It resolves every selector and mounts the camera without recording. When the UI 
 selector no longer matches, you find out in seconds instead of three minutes into a take. It also
 reports which camera rung it chose and why it demoted, if it did.
 
-### There is no separate `voice` step, and the ordering still matters
+### Narration is synthesised before the browser opens, so the ordering matters
 
-Narration is synthesised before the browser opens, inside both `rehearse` and `record`
-(`src/record.ts:129-138@a394a34`). Running `rehearse` first therefore warms the cache, so the
-subsequent `record` costs no API calls for unchanged text. The CLI still lists a `voice` command; it
-currently exits telling you to use `rehearse` (`src/index.ts@a394a34`).
+Inside both `rehearse` and `record` (`src/record.ts:183-199@b4f9175`). Running `rehearse` first
+therefore warms the cache, so the subsequent `record` costs no API calls for unchanged text — which is
+what makes the guided flow's iterate-then-approve loop affordable. With `--format gif|webp` the whole
+block is skipped instead, so there is no cache to warm and nothing to pay twice.
 
 ### The cache is keyed on everything that changes the audio
 

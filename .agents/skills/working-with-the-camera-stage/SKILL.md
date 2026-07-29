@@ -109,6 +109,22 @@ earlier version returned `{stage:true, overlay:true}` unconditionally and a flak
 steps later with "cannot read scrollTo of null" — a mount that cannot fail visibly is one you debug
 from the wrong end.
 
+### Re-mounting does not re-style, so every `mount()` call must pass the style
+
+`mountOverlay` returns the existing host untouched when one is already in the document
+(`overlay/src/index.ts:93@b4f9175`). Two consequences, and the second was a live bug:
+
+- A second `mount(newStyle)` on the same document is a **no-op for appearance**. To test a different
+  preset's styling you need a fresh document (`page.reload()`), not another `mount()`.
+- A navigation *does* produce a fresh document, so the `goto` step rebuilds the overlay from whatever
+  style that call passes. Passing none fell back to `DEFAULT_STYLE`: after any `goto` the balloon
+  silently reverted to 17px and dropped `avoidCursor`, which in silent (GIF) output shrinks the only
+  channel the viewer has, mid-demo. Both call sites now pass `overlayStyleOf(preset)`
+  (`src/record.ts:340,782@b4f9175`).
+
+Pinned by "o estilo do preset chega no balão" in `test/stage.e2e.mjs` — it fails against a styleless
+re-mount.
+
 ## Procedure
 
 1. Change `overlay/src/**`.

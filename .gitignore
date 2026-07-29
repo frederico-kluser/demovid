@@ -21,3 +21,6 @@ src/generated/
 
 # disposable task plan written by project-router and deleted on completion
 TASK_PLAN.md
+
+# token transitório (30 min) que o skill-verify cunha para o hook de escrita
+.agents/skills/.validation-token.json
