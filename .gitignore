@@ -1,0 +1,15 @@
+node_modules/
+dist/
+overlay/dist/
+*.log
+.env
+.env.*
+!.env.example
+
+# artefatos de gravação e cache de TTS
+*.mp4
+*.mkv
+*.mp3
+*.wav
+.demovid-cache/
+src/generated/

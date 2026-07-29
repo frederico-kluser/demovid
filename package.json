@@ -1,0 +1,67 @@
+{
+  "name": "demovid",
+  "version": "0.1.0",
+  "description": "Gera vídeos de demonstração narrados de qualquer projeto frontend — injeta balões, mouse simulado e foco em elementos via Playwright, narra com OpenAI TTS e grava com o `rec`, em passe único.",
+  "type": "module",
+  "bin": {
+    "demovid": "dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build:overlay && tsc -p tsconfig.build.json",
+    "build:overlay": "node --import tsx scripts/build-overlay.ts",
+    "bake:springs": "node --import tsx scripts/bake-springs.ts",
+    "clean": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\"",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "link": "npm run build && npm link && demovid --help",
+    "test:e2e": "node test/stage.e2e.mjs",
+    "verify": "npm run typecheck && npm run build && npm run test:e2e && npm run test:record",
+    "test:record": "node --import tsx test/record.e2e.ts"
+  },
+  "keywords": [
+    "demo-video",
+    "product-demo",
+    "screen-recording",
+    "playwright",
+    "openai",
+    "tts",
+    "narration",
+    "gpu-screen-recorder",
+    "cli",
+    "typescript"
+  ],
+  "author": "Frederico Guilherme Kluser de Oliveira",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "playwright": "^1.61.1",
+    "yaml": "^2.8.1",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "esbuild": "^0.27.2",
+    "motion": "^12.43.0",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}
