@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [{ "type": "command", "command": "node .agents/hooks/skill-write-gate.mjs" }]
+      },
+      {
+        "matcher": "Read|Write|Edit|MultiEdit|Bash",
+        "hooks": [{ "type": "command", "command": "node .agents/hooks/security-guardrail.mjs" }]
+      }
+    ]
+  }
+}

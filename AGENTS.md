@@ -27,13 +27,22 @@ post-production.**
 - **Assert the overlay against a baseline captured at identity, not against any viewport metric.** Measured: `innerWidth` reads 1368 because it includes the scrollbar gutter, and `clientWidth` also reads 1368 while a `width:100%` fixed child measures 1353 — neither describes the box the overlay is entitled to. The requirement was never "the overlay equals N pixels"; it is "the overlay did not change when the camera moved". Scope: `assertOverlayUnscaled` in `overlay/src/stage.ts`.
 - **`transform-origin` is `0 0` and never changes.** Why: with a fixed origin every camera state is a pure affine matrix, so two states chain smoothly. Moving the origin is why the OSS prior art cannot chain zooms between targets.
 - **TTS is one API call per sentence.** Long inputs degrade badly (10–60 s silences, dropped sentences). Cache by content hash so editing one line re-synthesises one line. Scope: `src/openai/tts.ts`.
-- **Structured Outputs: hand-written JSON Schema, zod validating after.** `strict:true` rejects `pattern`/`minLength`/`maxItems` with a hard 400. `required` order is load-bearing. Scope: `src/openai/script.ts`.
+- **Structured Outputs: hand-written JSON Schema, zod validating after.** `strict:true` rejects `pattern`/`minLength`/`maxItems` with a hard 400. `required` order is load-bearing (action/target before say, so the model commits to what it does before writing what to say about it). Scope: `src/storyboard.ts`.
 - **`esbuild` is for the overlay bundle only.** The CLI builds with plain `tsc`. Why: the overlay must be a single IIFE string for `addInitScript`, which `tsc` cannot produce; everything else has no bundling need.
 - (Everything else — strict types, `.js` import extensions, `import type` — is enforced by `npm run typecheck`; just run it.)
 
 ## Skills
-`.agents/skills/gravando-demos/SKILL.md` — how to drive the CLI end to end.
+Every task goes through `.agents/skills/project-router` — it asks clarifying questions in Portuguese,
+writes a disposable `TASK_PLAN.md`, selects the skill chain, and runs the evolution step at the end.
+Catalog: `.agents/skills/catalog.md`. `.claude/skills` is a symlink to `.agents/skills`.
+
+Skills are memory, so writes to them are gated: `node .agents/scripts/skill-verify.mjs <skill>` must
+be green before a `SKILL.md` can be edited (a PreToolUse hook enforces it). Rationale and the full
+pipeline: `.agents/skills/meta-skill-evolution`.
 
 ## Security
+- Hooks in `.claude/settings.json` block, deterministically: reads of credential files, a handful of
+  unrecoverable shell commands, and any `SKILL.md` write without a fresh validation token. They are
+  block-only and never mutate anything — see `.agents/hooks/README.md`.
 - Never read or commit `.env` or `~/.secrets`. The shell wrapper loads secrets; code reads `process.env` only.
 - The browser always runs with a **disposable** `--user-data-dir`. Never point it at the user's real profile: bookmarks, extensions and their signed-in accounts would end up in the video.

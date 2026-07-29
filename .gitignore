@@ -16,3 +16,6 @@ src/generated/
 
 # local Claude Code settings (bootstrap Stop hook lives here, not committed)
 .claude/settings.local.json
+
+# disposable task plan written by project-router and deleted on completion
+TASK_PLAN.md

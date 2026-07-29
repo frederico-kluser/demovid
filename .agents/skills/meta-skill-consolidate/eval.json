@@ -1,0 +1,20 @@
+{
+  "routing": {
+    "must_trigger": [
+      "garbage collect the skill library and retire stale passages",
+      "two skills contradict each other, consolidate them"
+    ],
+    "must_not_trigger": [
+      "record a demo video of my dashboard",
+      "the recorder process was left running"
+    ]
+  },
+  "claims": [
+    { "assert": "file-exists", "path": ".agents/scripts/skill-verify.mjs",
+      "why": "the pipeline invokes it as the external signal" },
+    { "assert": "file-exists", "path": ".agents/scripts/skill-lint.mjs",
+      "why": "form checks referenced by the procedure" },
+    { "assert": "file-exists", "path": ".agents/hooks/skill-write-gate.mjs",
+      "why": "the gate that makes the pipeline mandatory rather than advisory" }
+  ]
+}

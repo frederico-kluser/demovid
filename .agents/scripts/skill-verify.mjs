@@ -3,6 +3,7 @@
  * The external validation signal for a skill — the thing that authorises a write.
  *
  *   node .agents/scripts/skill-verify.mjs <skill> [--intent "one line"]
+ *   node .agents/scripts/skill-verify.mjs <skill> --repair   # when it is already red
  *   node .agents/scripts/skill-verify.mjs --all
  *
  * Runs four deterministic checks and, only if all pass, mints a short-lived
@@ -12,6 +13,13 @@
  *   2. claims        — the skill's factual assertions still hold against the repo
  *   3. routing       — must_trigger/must_not_trigger queries still resolve here
  *   4. signal        — the skill's declared verification_signal command is green
+ *
+ * The gate's invariant is "you ran the pipeline and know the current state
+ * before writing" — NOT "the skill was already perfect". A skill that is red
+ * cannot otherwise be repaired: it needs an edit to go green, and the token to
+ * make that edit requires green. `--repair` resolves that deadlock honestly by
+ * minting a token only when verification is currently FAILING, recording the
+ * failures in it. What stays forbidden is writing blind.
  *
  * WHAT THIS DOES NOT PROVE, stated plainly so the guarantee is not overclaimed:
  * the token attests that the pipeline RAN and the repo agreed with the skill at
@@ -186,6 +194,7 @@ function verify(name, allSkills, { runSignal }) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const argv = process.argv.slice(2);
   const all = argv.includes("--all");
+  const repair = argv.includes("--repair");
   const runSignal = argv.includes("--signal");
   const intentIdx = argv.indexOf("--intent");
   const intent = intentIdx >= 0 ? argv[intentIdx + 1] : undefined;
@@ -204,6 +213,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 
   let failed = 0;
+  const failureDetail = [];
   for (const n of targets) {
     const r = verify(n, allSkills, { runSignal });
     console.log(`\n${r.ok ? "✓" : "✗"} ${n}`);
@@ -215,12 +225,45 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         }
       }
     }
-    if (!r.ok) failed++;
+    if (!r.ok) {
+      failed++;
+      for (const g of r.results) for (const i of g.items) if (!i.ok) failureDetail.push(`[${g.group}] ${i.detail}`);
+    }
   }
 
-  if (failed) {
+  if (failed && !(repair && !all)) {
     console.log(`\n[skill-verify] ${failed}/${targets.length} failed — no token minted.`);
+    if (!all) console.log(`If you are fixing exactly these failures, re-run with --repair to mint a repair token.`);
     process.exit(1);
+  }
+
+  if (repair && !all) {
+    if (!failed) {
+      console.log(`\n[skill-verify] "${targets[0]}" is already green — use a normal run, not --repair.`);
+      process.exit(1);
+    }
+    writeFileSync(
+      TOKEN,
+      JSON.stringify(
+        {
+          skill: targets[0],
+          hash_at_verify: skillHash(targets[0]),
+          intent: intent ?? "repair",
+          mode: "repair",
+          repairing: failureDetail,
+          signal: readSkill(targets[0]).fm?.metadata?.verification_signal ?? null,
+          issued_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + TTL_MS).toISOString(),
+        },
+        null,
+        2,
+      ) + "\n",
+      "utf8",
+    );
+    console.log(`\n[skill-verify] REPAIR token minted for "${targets[0]}" — ${failureDetail.length} known failure(s):`);
+    for (const d of failureDetail) console.log(`    ${d}`);
+    console.log(`Fix exactly these, then re-run without --repair. A repair write that does not go green must be reverted.`);
+    process.exit(0);
   }
 
   if (!all) {

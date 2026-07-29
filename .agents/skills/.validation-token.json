@@ -1,0 +1,8 @@
+{
+  "skill": "meta-skill-consolidate",
+  "hash_at_verify": "972b93a60c00f0e4",
+  "intent": "trigger clause led the sentence instead of being buried",
+  "signal": "node .agents/scripts/skill-verify.mjs --all",
+  "issued_at": "2026-07-29T15:29:20.462Z",
+  "expires_at": "2026-07-29T15:59:20.462Z"
+}

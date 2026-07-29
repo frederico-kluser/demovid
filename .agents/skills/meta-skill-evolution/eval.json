@@ -1,0 +1,20 @@
+{
+  "routing": {
+    "must_trigger": [
+      "decide whether this learning should be persisted into a skill",
+      "propose a new skill draft for an uncovered area"
+    ],
+    "must_not_trigger": [
+      "record a demo video of my dashboard",
+      "the recorder process was left running"
+    ]
+  },
+  "claims": [
+    { "assert": "file-exists", "path": ".agents/scripts/skill-verify.mjs",
+      "why": "the pipeline invokes it as the external signal" },
+    { "assert": "file-exists", "path": ".agents/scripts/skill-lint.mjs",
+      "why": "form checks referenced by the procedure" },
+    { "assert": "file-exists", "path": ".agents/hooks/skill-write-gate.mjs",
+      "why": "the gate that makes the pipeline mandatory rather than advisory" }
+  ]
+}

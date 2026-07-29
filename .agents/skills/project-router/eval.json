@@ -1,0 +1,20 @@
+{
+  "routing": {
+    "must_trigger": [
+      "route this implementation task to the right skills first",
+      "dispatch every change through the project entry point"
+    ],
+    "must_not_trigger": [
+      "the spotlight cutout radius is wrong",
+      "trim edge silence from the narration clips"
+    ]
+  },
+  "claims": [
+    { "assert": "file-exists", "path": ".agents/skills/catalog.md",
+      "why": "step 4 of the protocol reads the catalog" },
+    { "assert": "file-exists", "path": ".agents/bootstrap/skill-map.md",
+      "why": "step 5 takes its ordering rules from the skill map" },
+    { "assert": "file-contains", "path": ".gitignore", "needle": "TASK_PLAN.md",
+      "why": "the plan file is disposable; if it were tracked, step 7 would delete a committed file" }
+  ]
+}

@@ -9,6 +9,12 @@ selection time, which is why they name their triggers explicitly.
 Source of truth is `.agents/skills/`. `.claude/skills` is a symlink to it, so the same library is
 visible to any tool that reads either path.
 
+## Router — the only entry point
+
+### `project-router`
+
+Routes every implementation task in this repository to the right skills before any work begins, after interrogating the request until it is unambiguous. Use whenever the user asks for any change, fix, feature, refactor, investigation or recording in demovid — even a one-line change, and even when they do not mention skills. This is the only entry point; nothing else dispatches. Skipping it means working without the project knowledge that has already been paid for.
+
 ## Knowledge — load before acting
 
 ### `following-typescript-conventions`
@@ -60,6 +66,20 @@ Explains demovid's two very different test harnesses, which command actually pro
 Carries the measured constraints of demovid's in-page camera and overlay — why the transform goes on an injected fixed stage and never on document.body, why the overlay lives in the top layer AND a shadow root, and which CSS properties are banned outright. Use whenever you touch overlay/src/**, change zoom or panning, move or restyle the balloon, cursor or spotlight, debug blurry magnified text, a header that scrolls away, a balloon in the wrong place, or an overlay that scaled with the app. Every rule here was paid for by a measurement; assume none of it is intuitive.
 
 *Verified by:* `npm run test:e2e`
+
+## Meta — the memory pipeline
+
+### `meta-skill-consolidate`
+
+Periodic garbage collection for the skill library — deduplicates overlapping passages, resolves contradictions, detects knowledge gone stale because the code it cites moved, enforces the token budget, and retires content that no longer earns its place. Use whenever a skill's claims fail verification, whenever two skills seem to say the same thing, whenever routing feels ambiguous or a must_trigger query ties, whenever the catalog has grown past roughly a dozen skills, and on a periodic schedule even with no visible symptom. Deletion here is irreversible in effect even when git can undo it, so every removal needs a second opinion and the user's confirmation.
+
+*Verified by:* `node .agents/scripts/skill-verify.mjs --all`
+
+### `meta-skill-evolution`
+
+Decides what happens to something learned during a task — update an existing skill, propose a new one as a draft, or discard it — and runs the five-step memory pipeline that gates any persisted write. Use at the end of every task without exception, and use it whenever you are tempted to write anything into a SKILL.md, whenever a task revealed a constraint no skill covers, or whenever an existing skill turned out to be wrong. Discarding is the common and correct outcome; treat a write as the exception that must be argued for.
+
+*Verified by:* `node .agents/scripts/skill-verify.mjs --all`
 
 ## How an update gets persisted
 
