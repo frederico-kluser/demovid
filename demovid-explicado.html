@@ -1,0 +1,817 @@
+<!doctype html>
+<html lang="pt-BR" data-bs-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>demovid — o que é, como usar e como o project-router dispara o trabalho</title>
+
+<link rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
+      integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB"
+      crossorigin="anonymous">
+<link rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
+      integrity="sha384-CK2SzKma4jA5H/MXDUU7i1TqZlCFaD4T01vtyDFvPlD97JQyS+IsSh1nI2EFbpyk"
+      crossorigin="anonymous">
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css"
+      integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH"
+      crossorigin="anonymous">
+
+<style>
+  [id] { scroll-margin-top: 5rem; }
+
+  pre { position: relative; margin-bottom: 1rem; }
+  pre code.hljs { padding-right: 4rem; border-radius: var(--bs-border-radius); font-size: .875rem; }
+
+  .copy-btn { position: absolute; top: .5rem; right: .5rem; opacity: .4; transition: opacity .15s; }
+  pre:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
+
+  .tab-pane:focus-visible { outline: 0; box-shadow: 0 0 0 .2rem rgba(var(--bs-emphasis-color-rgb), .15); }
+
+  @media print {
+    .nav-tabs, .copy-btn { display: none !important; }
+    .tab-content > .tab-pane { display: block !important; opacity: 1 !important; page-break-inside: avoid; }
+    .tab-pane::before { content: attr(data-print-title); display: block;
+                        font-size: 1.25rem; font-weight: 600; margin: 1.5rem 0 .5rem; }
+  }
+</style>
+</head>
+
+<body class="bg-body">
+
+<nav class="navbar navbar-expand-lg sticky-top bg-body-tertiary border-bottom">
+  <div class="container">
+    <span class="navbar-brand fw-semibold"><i class="bi bi-camera-reels me-1"></i>demovid</span>
+    <span class="navbar-text small text-body-secondary d-none d-md-inline">v0.2.0 · Apache-2.0 · 29/07/2026</span>
+  </div>
+</nav>
+
+<main class="container py-4" style="max-width: 60rem">
+
+  <header class="mb-4">
+    <h1 class="display-6 fw-semibold">demovid: o projeto, como usar e como pedir mudanças nele</h1>
+    <p class="lead text-body-secondary">
+      Ao final você sabe rodar uma gravação de ponta a ponta, escrever ou corrigir um roteiro à mão,
+      entender por que a arquitetura é do jeito que é — e por que toda tarefa neste repositório
+      começa pelo <code>project-router</code>.
+    </p>
+    <div class="d-flex flex-wrap gap-2">
+      <span class="badge text-bg-secondary">TypeScript</span>
+      <span class="badge text-bg-secondary">Node ≥ 20</span>
+      <span class="badge text-bg-secondary">Linux/X11</span>
+      <span class="badge text-bg-secondary">Playwright + OpenAI</span>
+      <span class="badge text-bg-secondary">11 skills</span>
+    </div>
+  </header>
+
+  <div class="alert alert-warning d-flex gap-2" role="alert">
+    <i class="bi bi-exclamation-triangle-fill flex-shrink-0 fs-5"></i>
+    <div>
+      <strong>Antes de qualquer coisa, três pré-requisitos que não são negociáveis.</strong>
+      <span class="d-block mt-1">
+        <strong>1.</strong> Linux com <strong>X11</strong> (no Wayland cai no portal do desktop, não testado).
+        <strong>2.</strong> Um browser da família Chromium — <em>Firefox não funciona</em>, não tem CDP.
+        <strong>3.</strong> <code>OPENAI_API_KEY</code> com <strong>saldo</strong>; a chave ser válida não basta.
+        Rode <code>demovid doctor --deep</code> — ele prova as três.
+      </span>
+    </div>
+  </div>
+
+  <ul class="nav nav-tabs" id="doc-tabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="tab-oquee" data-bs-toggle="tab" data-bs-target="#pane-oquee"
+              type="button" role="tab" aria-controls="pane-oquee" aria-selected="true">
+        <i class="bi bi-eye me-1"></i>O que é
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-usar" data-bs-toggle="tab" data-bs-target="#pane-usar"
+              type="button" role="tab" aria-controls="pane-usar" aria-selected="false">
+        <i class="bi bi-terminal me-1"></i>Usar
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-roteiro" data-bs-toggle="tab" data-bs-target="#pane-roteiro"
+              type="button" role="tab" aria-controls="pane-roteiro" aria-selected="false">
+        <i class="bi bi-file-earmark-text me-1"></i>Roteiro
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-arquitetura" data-bs-toggle="tab" data-bs-target="#pane-arquitetura"
+              type="button" role="tab" aria-controls="pane-arquitetura" aria-selected="false">
+        <i class="bi bi-diagram-3 me-1"></i>Como funciona
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-router" data-bs-toggle="tab" data-bs-target="#pane-router"
+              type="button" role="tab" aria-controls="pane-router" aria-selected="false">
+        <i class="bi bi-signpost-split me-1"></i>project-router
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-armadilhas" data-bs-toggle="tab" data-bs-target="#pane-armadilhas"
+              type="button" role="tab" aria-controls="pane-armadilhas" aria-selected="false">
+        <i class="bi bi-exclamation-triangle me-1"></i>Armadilhas
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content border border-top-0 rounded-bottom p-4" id="doc-tabs-content">
+
+    <!-- ══════════════════════════════════ 1. O QUE É ══════════════════════════════════ -->
+    <div class="tab-pane fade show active" id="pane-oquee" role="tabpanel"
+         aria-labelledby="tab-oquee" tabindex="0" data-print-title="O que é">
+
+      <h2 class="h4">O que o demovid faz</h2>
+      <p>
+        Ele transforma <strong>qualquer projeto frontend em um vídeo de demonstração narrado</strong>, em
+        um passe só, sem pós-produção. Você roda o comando <em>dentro</em> do seu projeto: ele lê o
+        <code>package.json</code>, sobe (ou adota) o servidor de dev, varre o app atrás de elementos que
+        consegue de fato apontar, pergunta <strong>em português</strong> o que você quer demonstrar, manda o
+        <code>gpt-5.4</code> escrever o roteiro <em>só com os elementos verificados</em>, ensaia — e só então grava.
+      </p>
+
+<pre><code class="language-bash">cd ~/meu-app
+npx demovid    # varre → pergunta → IA escreve → ensaia → você aprova → grava</code></pre>
+
+      <div class="alert alert-primary d-flex gap-2" role="alert">
+        <i class="bi bi-info-circle-fill flex-shrink-0"></i>
+        <div>
+          <strong>Em uma linha:</strong> o áudio toca <em>ao vivo</em> durante a captura e o
+          <code>audio.onended</code> é quem avança o passo — então <strong>não existe timeline para
+          sincronizar</strong>. Sem alinhamento forçado, sem timestamps por palavra, sem drift.
+        </div>
+      </div>
+
+      <h3 class="h5 mt-4">O que sai no final</h3>
+      <p>Dois arquivos. O MP4 — e um <code>.timeline.json</code> que um gravador de tela comum não teria
+        como produzir, porque o demovid <em>causou</em> tudo que está no quadro:</p>
+
+<pre><code class="language-json">{ "clock": { "method": "first-frame-ts", "residualMs": 17 },
+  "narration": [{ "text": "Aqui em cima ficam os indicadores…",
+                  "startMs": 15341, "endMs": 18805, "measured": true }],
+  "events":    [{ "t": "camera-move", "startMs": 14980, "endMs": 15430 }],
+  "cuts":      [{ "atMs": 33174, "score": 0.75, "kind": "entre-passos",
+                  "reasons": ["silêncio de 4375ms (+0.35)", "câmera parada (+0.25)",
+                              "fronteira de passo (+0.15)"] }] }</code></pre>
+
+      <p>
+        <code>clock.method</code> diz qual âncora foi confiada e <code>residualMs</code> é a barra de erro
+        honesta de <em>todo</em> timestamp do arquivo. Os cortes carregam a derivação da nota, porque
+        <strong>uma nota que você não sabe explicar é uma nota que você não sabe ajustar</strong>.
+      </p>
+
+      <h3 class="h5 mt-4">Do que ele é feito</h3>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Peça</th><th>Papel</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Playwright + Chromium</strong> (headed, perfil descartável)</td><td>Carrega o app e executa os passos</td></tr>
+            <tr><td><strong>Overlay injetado</strong></td><td>Balão de fala, cursor sintético, spotlight, câmera (zoom/pan)</td></tr>
+            <tr><td><strong>OpenAI TTS</strong></td><td>Narração pré-renderizada, uma chamada por frase, com cache</td></tr>
+            <tr><td><strong><code>gpu-screen-recorder</code></strong> (ou ffmpeg)</td><td>Captura a <em>janela</em> do browser + áudio do sistema</td></tr>
+            <tr><td><strong><code>gpt-5.4</code></strong> via Structured Outputs</td><td>Escreve e refina o roteiro a partir do inventário do app</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="h5 mt-4">Estado atual</h3>
+      <p class="mb-2">
+        Funcionando: o fluxo guiado, <code>doctor</code>, <code>rehearse</code>, <code>record</code>,
+        <code>restore</code>. Presets <code>boardroom</code> e <code>helpdesk</code>, locale
+        <code>pt-BR</code>. Resoluções de <code>720p</code> a <code>reels</code> (9:16 vertical), mais
+        qualquer um dos 207 nomes de device do Playwright.
+      </p>
+      <p class="text-body-secondary small mb-0">
+        O gravador dedicado é <strong>opcional</strong>: sem o <code>gpu-screen-recorder</code>, o demovid cai
+        para ffmpeg (<code>x11grab</code> + monitor do PulseAudio, com NVENC ou VAAPI quando existir).
+        O fallback <em>não</em> pausa e <em>não</em> segue janela que se move — e ele avisa disso em vez de fingir.
+      </p>
+    </div>
+
+    <!-- ══════════════════════════════════ 2. USAR ══════════════════════════════════ -->
+    <div class="tab-pane fade" id="pane-usar" role="tabpanel"
+         aria-labelledby="tab-usar" tabindex="0" data-print-title="Usar">
+
+      <h2 class="h4">O caminho normal: o fluxo guiado</h2>
+      <p>Rodar sem comando nenhum, de dentro do projeto, é o fluxo completo:</p>
+
+<pre><code class="language-bash">cd ~/meu-app
+npx demovid                 # interativo: ele pergunta o que demonstrar
+</code></pre>
+
+      <p>O que acontece, em ordem — e onde <em>você</em> entra:</p>
+      <ol>
+        <li><strong>Varredura.</strong> Lê o <code>package.json</code>, sobe ou adota o servidor de dev, abre um
+          browser de sondagem e cataloga os elementos endereçáveis. Se achar zero, ele para e diz que o app
+          provavelmente exige login.</li>
+        <li><strong>O pedido.</strong> Pergunta em português: <em>"O que você quer demonstrar?"</em>
+          (ou você passa <code>--about "…"</code> e não há pergunta).</li>
+        <li><strong>O roteiro.</strong> O <code>gpt-5.4</code> escreve o storyboard usando <strong>apenas</strong>
+          os seletores da lista permitida, e o arquivo é salvo em <code>demo.yaml</code>.</li>
+        <li><strong>Ensaio.</strong> Valida cada seletor, monta a câmera e sintetiza a narração — <em>sem gravar</em>.</li>
+        <li><strong>O portão.</strong> Ele imprime o plano e espera: <kbd>Enter</kbd> grava,
+          <kbd>n</kbd> cancela (o YAML fica salvo), ou <strong>você escreve o que mudar</strong>
+          (<em>"mais curto, comece pela busca"</em>) e ele refina e ensaia de novo, quantas vezes precisar.</li>
+        <li><strong>Gravação.</strong> Sai o MP4 e o <code>.timeline.json</code> ao lado.</li>
+      </ol>
+
+      <div class="alert alert-secondary d-flex gap-2" role="alert">
+        <i class="bi bi-lightbulb-fill flex-shrink-0"></i>
+        <div>O ensaio <strong>aquece o cache de TTS</strong>. Como a narração é sintetizada antes do browser abrir,
+          tanto no <code>rehearse</code> quanto no <code>record</code>, gravar depois de ensaiar não custa
+          nenhuma chamada de API para o texto que não mudou.</div>
+      </div>
+
+      <h3 class="h5 mt-4">O caminho manual</h3>
+<pre><code class="language-bash">demovid doctor                            # essa máquina consegue gravar?
+demovid rehearse demo.yaml                # valida seletores e câmera, não grava nada
+demovid record   demo.yaml --res reels    # → demo.mp4 + demo.timeline.json</code></pre>
+
+      <h3 class="h5 mt-4">Comandos</h3>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Comando</th><th>O que faz</th></tr></thead>
+          <tbody>
+            <tr><td><em>(sem comando)</em></td><td>O fluxo guiado no diretório atual. Sem terminal interativo e sem <code>--about</code>, imprime a ajuda e sai com erro em vez de travar.</td></tr>
+            <tr><td><code>script [dir]</code></td><td>O mesmo, explicitamente (padrão: diretório atual)</td></tr>
+            <tr><td><code>doctor</code></td><td>Checa gravador, browser, ffmpeg, X11 e OpenAI. Diz qual backend escolheu <em>e por quê</em></td></tr>
+            <tr><td><code>rehearse &lt;demo.yaml&gt;</code></td><td>Ensaio: valida seletores e câmera SEM gravar</td></tr>
+            <tr><td><code>record &lt;demo.yaml&gt;</code></td><td>Grava de verdade e entrega o MP4 + a timeline</td></tr>
+            <tr><td><code>restore [dir]</code></td><td>Desfaz anotações que o demovid tenha deixado no seu código</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="h5 mt-4">Opções</h3>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Flag</th><th>Efeito</th></tr></thead>
+          <tbody>
+            <tr><td><code>-o, --out &lt;file&gt;</code></td><td>Caminho de saída (<code>-</code> = stdout onde fizer sentido)</td></tr>
+            <tr><td><code>--res &lt;formato&gt;</code></td><td>Preset (<code>720p 1080p 1440p desktop square reels mobile tablet</code>), um <code>WxH</code> como <code>1920x1080</code>, ou um device do Playwright (<code>"iPhone 15"</code>). O que não couber na tela é capturado no maior tamanho possível e ampliado no fim</td></tr>
+            <tr><td><code>--monitor &lt;nome&gt;</code></td><td>Em qual saída gravar (padrão: a primária)</td></tr>
+            <tr><td><code>--chrome &lt;modo&gt;</code></td><td><code>auto</code> · <code>crop</code> · <code>keep</code>. <code>auto</code>/<code>crop</code> tiram a barra do browser — e qualquer aviso que ele resolva mostrar ali — ao custo de um passe de ffmpeg</td></tr>
+            <tr><td><code>--preset &lt;nome&gt;</code></td><td>Sobrescreve o preset do YAML. Sem a flag, vale o que está no arquivo</td></tr>
+            <tr><td><code>--locale &lt;tag&gt;</code></td><td><code>pt-BR</code> | <code>en-US</code> (padrão: <code>pt-BR</code>)</td></tr>
+            <tr><td><code>--browser &lt;path&gt;</code></td><td>Executável do browser (padrão: detecta o Brave)</td></tr>
+            <tr><td><code>-y, --yes</code></td><td>Pula o portão de aprovação e grava direto</td></tr>
+            <tr><td><code>--about "&lt;texto&gt;"</code></td><td>O que demonstrar, em vez de perguntar — é o que torna o fluxo guiado usável por script/agente</td></tr>
+            <tr><td><code>--url &lt;url&gt;</code></td><td>Usa esta URL em vez de subir o servidor de dev</td></tr>
+            <tr><td><code>-n, --dry-run</code></td><td>Mostra o que faria e sai</td></tr>
+            <tr><td><code>--deep</code></td><td>No <code>doctor</code>: gasta uma chamada mínima para provar que há <strong>saldo</strong></td></tr>
+            <tr><td><code>-v, --verbose</code></td><td>Log detalhado no stderr</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="h5 mt-4">Variáveis de ambiente</h3>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Variável</th><th>Para quê</th></tr></thead>
+          <tbody>
+            <tr><td><code>OPENAI_API_KEY</code></td><td>Obrigatória para o fluxo guiado e para a narração</td></tr>
+            <tr><td><code>DEMOVID_RECORDER</code></td><td><code>gsr</code> | <code>ffmpeg</code> — força o backend de captura</td></tr>
+            <tr><td><code>DEMOVID_BROWSER</code></td><td>Sobrescreve o executável do browser</td></tr>
+            <tr><td><code>DEMOVID_REC_DIR</code></td><td>Onde os MP4 são escritos (padrão: <code>~/Videos</code>)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="h5 mt-4">Desenvolvendo o próprio demovid</h3>
+<pre><code class="language-bash">npm install
+npm run dev -- doctor      # rodar a CLI da fonte, sem build
+npm run typecheck          # tsc --noEmit (metade do portão de qualidade)
+npm test                   # só os testes unitários — NÃO roda os e2e
+npm run verify             # typecheck → springs → build → unit → 2 e2e (um deles grava ~8s de vídeo real)</code></pre>
+      <p class="text-body-secondary small mb-0">
+        Não há eslint nem prettier neste repositório. O portão de qualidade é
+        <code>npm run typecheck</code> + <code>npm test</code>; o que nenhum dos dois pega está escrito
+        nas skills (veja a aba <a href="#pane-router" class="link-underline-opacity-50">project-router</a>).
+      </p>
+    </div>
+
+    <!-- ══════════════════════════════════ 3. ROTEIRO ══════════════════════════════════ -->
+    <div class="tab-pane fade" id="pane-roteiro" role="tabpanel"
+         aria-labelledby="tab-roteiro" tabindex="0" data-print-title="Roteiro (demo.yaml)">
+
+      <h2 class="h4">O storyboard é um YAML, e dá para escrever à mão</h2>
+      <p>É o mesmo arquivo que a IA gera — o fluxo guiado não usa um formato secreto. Editar o
+        <code>demo.yaml</code> e rodar <code>demovid record</code> é um caminho de primeira classe.</p>
+
+<pre><code class="language-yaml"># examples/demo.yaml
+title: Painel de Exames
+url: ./app.html          # relativo ao YAML, não ao diretório atual
+locale: pt-BR
+preset: boardroom
+
+steps:
+  - action: focus
+    target: "#kpi-pendentes"
+    say: Aqui em cima ficam os indicadores do dia.
+  - action: type
+    target: "#busca"
+    value: "REQ-88413"
+    say: A busca aceita o protocolo ou o nome do paciente.</code></pre>
+
+      <div class="alert alert-info d-flex gap-2" role="alert">
+        <i class="bi bi-link-45deg flex-shrink-0"></i>
+        <div><code>url</code> relativa resolve contra <strong>o diretório do próprio YAML</strong>. É o que
+          torna um roteiro portátil entre máquinas — um caminho absoluto cravado no arquivo o mataria.</div>
+      </div>
+
+      <h3 class="h5 mt-4">O vocabulário de ações</h3>
+      <p>Sete verbos, pequeno de propósito: cada um tem que ser algo que o overlay saiba narrar,
+        apontar o cursor e se recuperar quando falha.</p>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th><code>action</code></th><th>Exige</th><th>Observação</th></tr></thead>
+          <tbody>
+            <tr><td><code>goto</code></td><td><code>value</code> (a URL)</td><td>Navega</td></tr>
+            <tr><td><code>click</code></td><td><code>target</code></td><td>Cursor sintético viaja até o elemento</td></tr>
+            <tr><td><code>type</code></td><td><code>target</code> + <code>value</code></td><td>Digita o texto</td></tr>
+            <tr><td><code>hover</code></td><td><code>target</code></td><td></td></tr>
+            <tr><td><code>focus</code></td><td><code>target</code></td><td>Aponta sem interagir — o mais seguro para narrar</td></tr>
+            <tr><td><code>scroll</code></td><td>—</td><td></td></tr>
+            <tr><td><code>wait</code></td><td><code>value</code> (ms) <em>ou</em> <code>target</code></td><td>Espera tempo ou elemento</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="h5 mt-4">Campos de cada passo</h3>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Campo</th><th>Tipo</th><th>Para quê</th></tr></thead>
+          <tbody>
+            <tr><td><code>target</code></td><td>string</td><td>Seletor CSS, ou um locator <code>text=</code>/<code>role=</code> do Playwright</td></tr>
+            <tr><td><code>value</code></td><td>string</td><td>URL do <code>goto</code>, texto do <code>type</code>, ms do <code>wait</code></td></tr>
+            <tr><td><code>say</code></td><td>string</td><td>A narração. É <strong>quebrada em frases, uma chamada de TTS cada</strong>, e o passo avança no <code>onended</code> do último clipe</td></tr>
+            <tr><td><code>zoom</code></td><td>1–4</td><td>Sobrescreve o zoom do preset neste passo. <code>1</code> desliga o zoom aqui</td></tr>
+            <tr><td><code>holdMs</code></td><td>0–30000</td><td>Segura mais um tempo depois que o áudio do passo termina</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="h5 mt-4">Presets e locale</h3>
+      <p>
+        Preset é <strong>aparência e ritmo</strong>: <code>boardroom</code> (comitê de avaliação, contido) ou
+        <code>helpdesk</code> (usuário confuso — mais devagar, escurecimento mais pesado, texto maior).
+        O locale (<code>pt-BR</code>) é uma camada separada que compõe por cima. A câmera, ao contrário, é
+        <strong>segurança</strong>: o ensaio decide o "degrau" e <em>rebaixa</em> sozinho quando não dá — se o
+        relatório disser <code>R3</code>, foi ele avisando que gravou sem zoom, e a razão está na saída.
+      </p>
+
+      <h3 class="h5 mt-4">Por que a validação é dupla</h3>
+      <p>
+        O roteiro passa por um <strong>JSON Schema escrito à mão</strong> (para a API de Structured Outputs) e
+        <strong>depois</strong> por um schema zod. Não é redundância:
+      </p>
+      <ul>
+        <li><code>strict: true</code> da OpenAI <strong>rejeita com 400 duro</strong> as palavras-chave
+          <code>pattern</code>, <code>minLength</code> e <code>maxItems</code> — então essas restrições
+          <em>têm</em> que viver no zod.</li>
+        <li>A ordem do <code>required</code> é carga útil: <code>action</code> e <code>target</code> vêm
+          <strong>antes</strong> de <code>say</code>, para o modelo se comprometer com <em>o que faz</em>
+          antes de escrever <em>o que fala sobre isso</em>.</li>
+      </ul>
+
+      <div class="alert alert-success d-flex gap-2" role="alert">
+        <i class="bi bi-shield-check flex-shrink-0"></i>
+        <div><strong>Nenhum seletor chega ao modelo sem verificação.</strong> O inventário só publica um seletor
+          depois que <code>querySelectorAll(sel).length === 1</code> na página viva — um elemento que não dá
+          para endereçar simplesmente nunca vira alvo. E a varredura navega com <code>goto</code> e
+          <strong>nunca clica</strong>: um crawler que clica um dia envia um formulário ou apaga uma linha
+          no banco de dev de quem está operando.</div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════ 4. COMO FUNCIONA ══════════════════════════════════ -->
+    <div class="tab-pane fade" id="pane-arquitetura" role="tabpanel"
+         aria-labelledby="tab-arquitetura" tabindex="0" data-print-title="Como funciona">
+
+      <h2 class="h4">As três camadas</h2>
+
+<pre><code class="language-text">┌─ gravador ── captura a JANELA do browser + áudio do sistema ─────┐
+│ ┌─ Chromium (perfil descartável, headed) ──────────────────────┐ │
+│ │  document.documentElement                                    │ │
+│ │   ├── &lt;div id=__demovid_stage&gt;  ← O PALCO, position:fixed    │ │
+│ │   │     translate3d(…) scale(k) · transform-origin 0 0       │ │
+│ │   │     (o app inteiro foi movido para dentro daqui)         │ │
+│ │   └── &lt;div popover=manual&gt;      ← O OVERLAY, top layer       │ │
+│ │         + shadow root. Balão · cursor · máscara · áudio      │ │
+│ └──────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────┘</code></pre>
+
+      <h3 class="h5 mt-4">Por que o overlay nunca escala</h3>
+      <p>
+        Elementos do <em>top layer</em> escapam de transforms de ancestrais — CSS Position L4 §3: eles
+        "geram caixas como se fossem irmãos do elemento raiz… ancestrais com <code>overflow</code>,
+        <code>opacity</code>, <code>mask</code> etc. não podem afetá-los". Mesmo assim o balão
+        <strong>acompanha o zoom de graça</strong>, porque <code>getBoundingClientRect()</code> de um elemento
+        dentro do palco já devolve o retângulo <em>transformado</em>.
+      </p>
+
+      <h3 class="h5 mt-4">O invariante de um passe só</h3>
+      <p>
+        Áudio toca ao vivo → <code>onended</code> avança o passo → a captura é do SO, a 60 fps, com
+        codificação na GPU. Nada é montado depois. É essa a diferença em relação às ferramentas parecidas
+        que apareceram em 2026 (<code>playwright-recast</code>, <code>argo</code>,
+        <code>shot-scraper video</code>, <code>Cap</code>), que trabalham com uma timeline de pós-produção.
+      </p>
+
+      <h3 class="h5 mt-4">Mapa dos módulos</h3>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Caminho</th><th>Dono de quê</th></tr></thead>
+          <tbody>
+            <tr><td><code>src/index.ts</code></td><td>CLI, <code>parseArgs</code>, ajuda — e <code>importSessionEnv()</code> antes de tudo</td></tr>
+            <tr><td><code>src/scriptflow.ts</code></td><td>O fluxo guiado: varre → pergunta → escreve → ensaia → portão → grava</td></tr>
+            <tr><td><code>src/project/{scan,devserver,inventory}.ts</code></td><td>Ler o projeto, subir o dev server, catalogar elementos endereçáveis</td></tr>
+            <tr><td><code>src/openai/{script,tts}.ts</code></td><td>Escrever/refinar o roteiro; sintetizar a narração (uma chamada por frase, com cache)</td></tr>
+            <tr><td><code>src/storyboard.ts</code></td><td>JSON Schema + zod, o vocabulário de ações</td></tr>
+            <tr><td><code>src/presets/**</code></td><td><code>boardroom</code>, <code>helpdesk</code> e a camada de locale</td></tr>
+            <tr><td><code>src/record.ts</code> · <code>src/browser.ts</code></td><td>A execução de um take; abrir o Chromium com perfil descartável</td></tr>
+            <tr><td><code>src/recorder/**</code></td><td>Os dois backends (gsr, ffmpeg), sinais, guarda e o env da sessão gráfica</td></tr>
+            <tr><td><code>src/timeline.ts</code> · <code>src/postprocess.ts</code></td><td>O <code>.timeline.json</code>, as notas de corte e o passe opcional de crop</td></tr>
+            <tr><td><code>overlay/src/**</code></td><td>Palco, balão, cursor, spotlight, sequenciador, animação (<code>motion/mini</code>)</td></tr>
+            <tr><td><code>src/exec.ts</code></td><td><code>run(bin, args[])</code> — <strong>todo</strong> binário externo passa por aqui, sem shell</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="h5 mt-4">Duas decisões que explicam o resto</h3>
+      <p><strong>1. <code>transform-origin</code> é <code>0 0</code> e nunca muda.</strong> Com a origem fixa, todo
+        estado de câmera é uma matriz afim pura, e dois estados encadeiam suavemente. Mover a origem é
+        exatamente por que a prior art open-source não consegue encadear zooms entre alvos.</p>
+      <p class="mb-0"><strong>2. <code>esbuild</code> é só para o bundle do overlay.</strong> A CLI compila com
+        <code>tsc</code> puro. O overlay precisa ser uma <em>string</em> IIFE única para o
+        <code>addInitScript</code>, coisa que o <code>tsc</code> não produz; o resto não tem necessidade
+        nenhuma de bundling.</p>
+    </div>
+
+    <!-- ══════════════════════════════════ 5. PROJECT-ROUTER ══════════════════════════════════ -->
+    <div class="tab-pane fade" id="pane-router" role="tabpanel"
+         aria-labelledby="tab-router" tabindex="0" data-print-title="project-router">
+
+      <h2 class="h4">Toda tarefa neste repositório entra pelo <code>project-router</code></h2>
+      <p>
+        Não é sugestão: <strong>é o único ponto de entrada, e nada mais despacha</strong>. Vale até para uma
+        mudança de uma linha, e vale mesmo quando o pedido não menciona skill nenhuma. Pular o router
+        significa trabalhar sem o conhecimento do projeto que <em>já foi pago</em> — cada regra das skills
+        substituiu uma que parecia certa.
+      </p>
+
+      <div class="alert alert-info d-flex gap-2" role="alert">
+        <i class="bi bi-translate flex-shrink-0"></i>
+        <div><strong>As perguntas ao usuário são todas em português do Brasil</strong>, enquanto o código e as
+          skills ficam em inglês. A divisão é deliberada — não "traduza" as perguntas para casar com o arquivo.</div>
+      </div>
+
+      <h3 class="h5 mt-4">O protocolo, em sete passos</h3>
+      <ol>
+        <li><strong>Perguntar muito, em português.</strong> Interrogar o pedido até a ambiguidade acabar: escopo
+          exato (o que está dentro <em>e fora</em>), entrada e saída esperadas, restrições, casos de borda,
+          critério de aceite observável e <strong>o que não pode mudar</strong>. Quando a resposta é escolha entre
+          opções concretas, usar <code>AskUserQuestion</code> — é mais rápido para quem responde e obriga as
+          alternativas a serem ditas com honestidade.</li>
+        <li><strong>Escrever <code>TASK_PLAN.md</code></strong> na raiz, em português: objetivo, passos, critério de
+          aceite, o que está fora de escopo. É um contrato com o usuário, não um bilhete para si mesmo.</li>
+        <li><strong>Classificar</strong> — quais domínios, que tipo (bug/feature/refactor/investigação/gravação),
+          qual complexidade.</li>
+        <li><strong>Selecionar as skills</strong> em <code>.agents/skills/catalog.md</code>. Na dúvida, a mais
+          específica. Se a tarefa é <em>operar</em> o demovid em vez de mudá-lo, é
+          <code>running-demo-recordings</code> e geralmente mais nada.</li>
+        <li><strong>Montar a cadeia</strong> na ordem certa (abaixo).</li>
+        <li><strong>Carregar o conhecimento e só então implementar.</strong> Ler as skills antes de escrever
+          código, não durante o debug: consultar a biblioteca depois da falha é só um jeito caro de
+          redescobrir a restrição.</li>
+        <li><strong>Ao terminar:</strong> rodar o passo <code>&lt;evolution&gt;</code> de cada skill envolvida
+          <em>e apagar o <code>TASK_PLAN.md</code></em>.</li>
+      </ol>
+
+      <h3 class="h5 mt-4">Ordem da cadeia</h3>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Quando</th><th>Skill</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Primeiro</strong>, se toca mais de um módulo</td><td><code>understanding-demovid-architecture</code></td></tr>
+            <tr><td>Em qualquer edição <code>.ts</code>, em paralelo com a de domínio</td><td><code>following-typescript-conventions</code></td></tr>
+            <tr><td>As quatro de domínio são independentes — podem carregar em paralelo</td><td><code>recording-with-rec</code> · <code>working-with-the-camera-stage</code> · <code>synthesizing-narration</code> · <code>authoring-storyboards-and-presets</code></td></tr>
+            <tr><td><strong>Depois</strong> da skill de domínio, se a mudança precisa de teste</td><td><code>testing-demovid</code></td></tr>
+            <tr><td><strong>Por último, sempre</strong></td><td><code>meta-skill-evolution</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="h5 mt-4">O catálogo — 11 skills em quatro grupos</h3>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Skill</th><th>Carregue quando…</th><th>Verificada por</th></tr></thead>
+          <tbody>
+            <tr class="table-active"><td colspan="3"><small class="text-body-secondary">Router — o único ponto de entrada</small></td></tr>
+            <tr><td><code>project-router</code></td><td>Sempre, antes de qualquer trabalho</td><td>—</td></tr>
+
+            <tr class="table-active"><td colspan="3"><small class="text-body-secondary">Conhecimento — carregar antes de agir</small></td></tr>
+            <tr><td><code>understanding-demovid-architecture</code></td><td>A mudança cruza módulos, ou você não sabe onde o código novo mora</td><td><code>npm run typecheck</code></td></tr>
+            <tr><td><code>following-typescript-conventions</code></td><td>Qualquer <code>.ts</code>: import, binário externo, <code>process.env</code>, classe de erro</td><td><code>npm run build</code></td></tr>
+
+            <tr class="table-active"><td colspan="3"><small class="text-body-secondary">Tarefa — carregar junto com o trabalho</small></td></tr>
+            <tr><td><code>running-demo-recordings</code></td><td>Gravar/regravar um vídeo — <em>operar</em>, não mudar o demovid</td><td><code>npm run dev -- doctor</code></td></tr>
+            <tr><td><code>recording-with-rec</code></td><td><code>src/recorder/**</code>, <code>record.ts</code>, <code>browser.ts</code>, MP4 truncado, gravador órfão</td><td><code>npm run test:record</code></td></tr>
+            <tr><td><code>working-with-the-camera-stage</code></td><td><code>overlay/src/**</code>, zoom, balão, cursor, texto borrado</td><td><code>npm run test:e2e</code></td></tr>
+            <tr><td><code>synthesizing-narration</code></td><td><code>src/openai/tts.ts</code>, voz, velocidade, silêncio morto, clipe pago duas vezes</td><td><code>npm test</code></td></tr>
+            <tr><td><code>authoring-storyboards-and-presets</code></td><td>Ação nova, <code>src/presets/**</code>, ritmo, 400 duro do Structured Outputs</td><td><code>npm test</code></td></tr>
+            <tr><td><code>testing-demovid</code></td><td>Qualquer assertion em <code>test/</code> — os dois harnesses têm regras <em>opostas</em></td><td><code>npm run verify</code></td></tr>
+
+            <tr class="table-active"><td colspan="3"><small class="text-body-secondary">Meta — o pipeline de memória</small></td></tr>
+            <tr><td><code>meta-skill-evolution</code></td><td>No fim de <strong>toda</strong> tarefa, sem exceção</td><td><code>skill-verify.mjs --all</code></td></tr>
+            <tr><td><code>meta-skill-consolidate</code></td><td>Skills se contradizem, roteamento ficou ambíguo, catálogo passou de ~12</td><td><code>skill-verify.mjs --all</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="h5 mt-4">Como uma skill é escrita — o portão</h3>
+      <p>
+        Skill é memória, então escrever nela é caro e é <strong>bloqueado por hook</strong>. Um
+        <code>SKILL.md</code> só pode ser editado depois que a verificação passa e cunha o token que o
+        <code>PreToolUse</code> exige:
+      </p>
+
+<pre><code class="language-bash">node .agents/scripts/skill-verify.mjs &lt;skill&gt;   # roda o portão E cunha o token do hook
+node .agents/scripts/skill-lint.mjs             # só a forma</code></pre>
+
+<pre><code class="language-text">importância → sinal externo → checagem de conflito → gating por eval → commit</code></pre>
+
+      <p>
+        A razão é que <strong>importância e verdade são coisas diferentes</strong>: uma regra enxuta, bem
+        escopada e corretamente citada ainda pode ser falsa — e, uma vez escrita, ela é recuperada em
+        tarefas parecidas e <em>seguida</em>. Descartar é o resultado comum e correto; não escrever nada é
+        a falha segura.
+      </p>
+
+      <h3 class="h5 mt-4">Regras e limites</h3>
+      <ul>
+        <li>Se nenhuma skill cobre a tarefa, o <code>meta-skill-evolution</code> <strong>propõe</strong> uma nova
+          como rascunho para revisão humana. Nunca publique uma skill direto.</li>
+        <li>Skills com efeito colateral amplo — uma gravação que toma a tela, uma mudança estrutural, um
+          deploy — não são invocadas sozinhas sem confirmar antes.</li>
+        <li><code>TASK_PLAN.md</code> é o <strong>único</strong> arquivo que este protocolo apaga. Os artefatos de
+          bootstrap (<code>.agents/bootstrap/**</code>, <code>catalog.md</code>,
+          <code>.bootstrap-state.json</code>) são permanentes — apagá-los descartaria a análise em que a
+          biblioteca inteira se apoia.</li>
+        <li><strong>Quando o protocolo é burocracia:</strong> corrigir um typo em um comentário não precisa de
+          seis perguntas e um arquivo de plano. Uma pergunta (<em>"É só isso mesmo?"</em>), sem plano, e
+          ainda assim o passo de evolução — que vai corretamente decidir que não há nada a persistir.
+          Cerimônia sem sinal ensina o usuário a contornar o router.</li>
+      </ul>
+
+      <div class="alert alert-warning d-flex gap-2 mt-4" role="alert">
+        <i class="bi bi-clock-history flex-shrink-0"></i>
+        <div>
+          <strong>Uma divergência real, encontrada ao montar este documento.</strong> A skill
+          <code>running-demo-recordings</code> afirma que <code>script</code> e <code>refine</code>
+          "<em>não estão implementados — escreva o YAML à mão</em>". Isso deixou de ser verdade: o fluxo
+          guiado existe em <code>src/scriptflow.ts</code> e <code>demovid script</code> está ligado em
+          <code>src/index.ts</code> (commit <code>b4f9175</code>, "demovid 2.0"). É exatamente o caso de
+          conhecimento <em>stale</em> que o <code>meta-skill-consolidate</code> existe para resolver —
+          e o conserto tem que passar pelo portão acima, não por uma edição direta.
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════ 6. ARMADILHAS ══════════════════════════════════ -->
+    <div class="tab-pane fade" id="pane-armadilhas" role="tabpanel"
+         aria-labelledby="tab-armadilhas" tabindex="0" data-print-title="Armadilhas">
+
+      <h2 class="h4">Coisas que este projeto mediu, para você não ter que medir</h2>
+      <p class="text-body-secondary">
+        A maioria contradiz o que a literatura em volta diz. Todas são reproduzíveis a partir dos testes em
+        <code>test/</code>.
+      </p>
+
+      <h3 class="h5 mt-4">Câmera e overlay</h3>
+
+      <div class="alert alert-danger d-flex gap-2" role="alert">
+        <i class="bi bi-x-octagon-fill flex-shrink-0"></i>
+        <div><strong>Transformar o <code>document.body</code> não funciona</strong> — e é o que as ferramentas
+          open-source dessa área fazem. Sob um <code>body</code> transformado, <code>position: fixed</code> se
+          comporta como <code>absolute</code>: um header vai para <code>y=-800</code> depois de rolar 800px,
+          <code>bottom: 0</code> resolve contra a altura do <em>conteúdo</em> (y=4004 em vez de 669) e
+          <code>height: 100%</code> vira o documento inteiro. <code>body</code> tem a <strong>largura</strong> do
+          viewport mas a <strong>altura</strong> do conteúdo — só metade de "coincide com o viewport" é verdade.
+          O palco tem que ser um elemento <code>position: fixed</code>.</div>
+      </div>
+
+      <div class="alert alert-danger d-flex gap-2" role="alert">
+        <i class="bi bi-x-octagon-fill flex-shrink-0"></i>
+        <div><strong>Nunca <code>will-change: transform</code> no palco.</strong> Ele fixa a escala de
+          rasterização, então o texto ampliado fica borrado <em>permanentemente</em> — não só enquanto
+          se move. (O <code>transform: scale()</code> em si <strong>não</strong> borra: capturaram a janela
+          real em k=1.4/2/3 e ampliaram 200% com nearest-neighbour — bordas de glifo limpas.)</div>
+      </div>
+
+      <div class="alert alert-warning d-flex gap-2" role="alert">
+        <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
+        <div><strong><code>scrollbar-width: none</code> no palco é estrutural, não cosmético.</strong> No instante
+          em que <em>qualquer</em> transform é setado — até <code>scale(1)</code> — um header
+          <code>position: fixed; left:0; right:0</code> troca o bloco contêiner do viewport para a caixa de
+          padding do palco, e uma barra de rolagem visível deixa essa caixa 15px mais estreita. O header vai
+          de 1353 para 1338px em silêncio.</div>
+      </div>
+
+      <p class="mb-1"><strong>Afira o overlay contra um baseline capturado na identidade, não contra métrica de
+        viewport.</strong> Medido: <code>innerWidth</code> lê 1368 porque inclui a calha da barra de rolagem, e
+        <code>clientWidth</code> também lê 1368 enquanto um filho fixo com <code>width:100%</code> mede 1353 —
+        nenhum dos dois descreve a caixa à qual o overlay tem direito. O requisito nunca foi "o overlay é
+        igual a N pixels"; é <em>"o overlay não mudou quando a câmera se moveu"</em>.</p>
+
+      <h3 class="h5 mt-4">Gravador e processos</h3>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Regra</th><th>Por quê</th></tr></thead>
+          <tbody>
+            <tr><td>Pare com <strong>SIGINT</strong>, nunca SIGKILL</td><td>SIGKILL trunca o container — o MP4 sai sem <code>moov</code> atom</td></tr>
+            <tr><td><strong>Nunca <code>pkill</code></strong></td><td>O demovid criou o filho, então o PID que ele tem <em>é</em> o gravador; <code>pkill -f</code> mataria também uma gravação que o usuário iniciou por conta própria</td></tr>
+            <tr><td>Pause é <strong>SIGUSR2 e é um toggle</strong></td><td>Rastreie o estado e reconcilie com as linhas <code>Paused</code>/<code>Unpaused</code> no stderr</td></tr>
+            <tr><td><code>running</code> é <code>exitCode === null &amp;&amp; signalCode === null</code></td><td><strong>Nunca <code>!child.killed</code></strong>: o Node marca <code>killed</code> depois de <em>qualquer</em> sinal entregue, e o SIGUSR2 fez essa propriedade mentir</td></tr>
+            <tr><td>Capture a <strong>janela</strong>, nunca uma região da tela</td><td>Propriedade de segurança, não de qualidade: captura de região lê o framebuffer e grava o que estiver empilhado por cima — um take de teste saiu com o cliente de chat do operador e as conversas privadas dele. Levantar a janela antes não resolve; qualquer janela pode vir para a frente no meio da gravação</td></tr>
+            <tr><td><code>importSessionEnv()</code> roda <strong>uma vez</strong>, em <code>src/index.ts</code>, antes de qualquer leitura de <code>DISPLAY</code></td><td>Ele extrai o env da sessão gráfica do <code>/proc/&lt;pid&gt;/environ</code> do compositor. Sem isso, a captura a partir de um contexto de agente morre com <code>for_each_active_monitor_output_drm failed</code> — e <em>o browser também precisa</em>, não só o gravador</td></tr>
+            <tr><td>Todo binário externo vai por <code>run(bin, args[])</code></td><td>Argumentos em array, sem shell — caminho não confiável não injeta. Consequência: nada de pipe ou redirect; use flags da ferramenta, e faça a busca no PATH pelo Node (<code>which()</code>), nunca <code>sh -c "command -v"</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="h5 mt-4">Narração (TTS)</h3>
+      <ul>
+        <li><strong>Uma chamada de API por frase.</strong> Entradas longas degradam feio: silêncios de 10 a 60 s e
+          frases sumindo. O cache é por hash do conteúdo, então editar uma linha ressintetiza uma linha.</li>
+        <li><strong><code>instructions</code> controla o ritmo até ~140 wpm e satura.</strong> Pedir 130 entregou
+          129; pedir 170 continuou entregando 140. Acima disso o único controle que funciona é
+          <code>speed</code> — e ele <em>é</em> confiável e linear aqui (1.15→1.19×, 1.30→1.32×, 1.50→1.58×).</li>
+        <li><strong>Corte o silêncio das bordas: vale ~840 ms por clipe.</strong> Medido em um clipe longo único
+          parece 80 ms e não valer a pena — medição errada para esta arquitetura. Clipes curtos carregam
+          padding proporcionalmente enorme: cerca de <strong>17 s de silêncio morto</strong> em um roteiro de 20
+          frases — e como o <code>onended</code> é quem avança, são 17 s de tela congelada. Aparar levou um
+          clipe de 101 para 140 wpm.</li>
+        <li><strong>O TTS narra imperativos corretamente.</strong> Uma alegação muito repetida diz que o
+          <code>gpt-4o-mini-tts</code> <em>responde</em> comandos em vez de lê-los, o que seria fatal aqui.
+          Transcrever a saída e comparar com a entrada deu 100% de fidelidade, com e sem
+          <code>instructions</code>.</li>
+      </ul>
+
+      <h3 class="h5 mt-4">Build e execução</h3>
+      <ul>
+        <li><strong><code>page.evaluate</code> precisa do shim <code>__name</code> sob o tsx.</strong> O
+          <code>keepNames</code> do esbuild compila toda função nomeada para <code>__name(fn, "fn")</code>; o
+          código serializado leva a referência para dentro da página enquanto o helper fica para trás, e
+          estoura <code>ReferenceError: __name is not defined</code> — que se parece exatamente com "este app
+          não tem elementos".</li>
+        <li><strong>O overlay anima com <code>motion/mini</code>, e todo tween precisa assentar.</strong> O mini
+          cancela uma animação superada sem disparar <code>onfinish</code>, então a promise
+          <code>finished</code> nunca resolve — e o driver em Node espera o <code>cursorTo</code> por
+          <code>page.evaluate</code>, então uma viagem interrompida travaria até o timeout do Playwright.
+          Nunca importe <code>motion</code> (61,8 KB, rAF na main thread) no lugar de <code>motion/mini</code>
+          (11,2 KB); o <code>build-overlay.ts</code> quebra o build acima de 34 KB.</li>
+        <li><strong>O browser sempre roda com <code>--user-data-dir</code> descartável.</strong> Nunca aponte para
+          o perfil real: favoritos, extensões e contas logadas iriam parar no vídeo.</li>
+      </ul>
+
+      <h3 class="h5 mt-4">Quando algo dá errado na gravação</h3>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Sintoma</th><th>Causa</th></tr></thead>
+          <tbody>
+            <tr><td>Vídeo mudo</td><td>O dispositivo de saída mudou no meio do take, ou o monitor do sink não é a fonte capturada. <strong>Não mexa no áudio durante a gravação</strong> — não há como recuperar sem regravar</td></tr>
+            <tr><td>Balão no elemento errado</td><td>Um seletor casou com outra coisa — rode <code>rehearse</code> e leia qual nó ele resolveu</td></tr>
+            <tr><td>O gravador se recusa a começar</td><td>Já existe uma captura rodando. Uma de cada vez</td></tr>
+            <tr><td>Gravou tudo sem zoom</td><td>O ensaio rebaixou a câmera para <code>R3</code>; a razão está na saída dele</td></tr>
+            <tr><td><code>insufficient_quota</code></td><td>A conta OpenAI está sem crédito. <code>demovid doctor --deep</code> confirma — o check simples não consegue, porque <code>/v1/models</code> é grátis e devolve 200 com saldo zero</td></tr>
+            <tr><td>Nenhum elemento endereçável encontrado</td><td>O app provavelmente exige login. Coloque o login <strong>no roteiro</strong>, com credenciais de teste</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <footer class="text-body-secondary small border-top mt-5 pt-3">
+    Fontes: <code>README.md</code>, <code>AGENTS.md</code>, <code>.agents/skills/</code> e o código em
+    <code>src/</code> — repositório demovid v0.2.0, em 29/07/2026.
+    Documento de arquivo único — salve, mande por anexo, abra offline.
+  </footer>
+
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
+        crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"
+        integrity="sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU"
+        crossorigin="anonymous"></script>
+
+<script>
+/* ── runtime do documento ────────────────────────────────────────────────────
+   Copie este bloco inteiro, sem editar. Ele faz três coisas:
+   1. guarda o código-fonte cru ANTES de qualquer transformação (para o copiar);
+   2. destaca a sintaxe e injeta o botão de copiar;
+   3. liga as abas ao #hash da URL, nos dois sentidos.
+   ────────────────────────────────────────────────────────────────────────── */
+(function () {
+  'use strict';
+
+  // 1. Fonte cru primeiro. Depois do highlight o DOM ganha <span>; textContent ainda
+  //    devolve o texto certo, mas plugins de numeração de linha o contaminam. Guardar
+  //    antes é a única versão que nunca mente.
+  var sources = new WeakMap();
+  document.querySelectorAll('pre > code').forEach(function (code) {
+    sources.set(code, code.textContent.replace(/\n$/, ''));
+  });
+
+  // 2. Highlight. Declare sempre a linguagem na classe: a auto-detecção erra em
+  //    trechos curtos (o mesmo snippet vira "ruby" numa aba e "perl" na outra).
+  if (window.hljs) hljs.highlightAll();
+
+  // Copiar. navigator.clipboard exige contexto seguro; em file:// o comportamento
+  // varia por navegador, então o fallback com execCommand não é opcional.
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text).then(function () { return true; },
+                                                      function () { return legacyCopy(text); });
+    }
+    return Promise.resolve(legacyCopy(text));
+  }
+
+  function legacyCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    // position:fixed + opacity:0 evita que a página role até o textarea.
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length); // iOS ignora select() sozinho
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
+  }
+
+  document.querySelectorAll('pre > code').forEach(function (code) {
+    var pre = code.parentElement;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-outline-secondary copy-btn';
+    btn.innerHTML = '<i class="bi bi-clipboard"></i>';
+    btn.setAttribute('aria-label', 'Copiar código');
+    btn.addEventListener('click', function () {
+      copyText(sources.get(code) || code.textContent).then(function (ok) {
+        btn.innerHTML = ok ? '<i class="bi bi-check-lg"></i>' : '<i class="bi bi-x-lg"></i>';
+        btn.classList.toggle('btn-outline-success', ok);
+        btn.classList.toggle('btn-outline-danger', !ok);
+        btn.classList.remove('btn-outline-secondary');
+        setTimeout(function () {
+          btn.innerHTML = '<i class="bi bi-clipboard"></i>';
+          btn.className = 'btn btn-sm btn-outline-secondary copy-btn';
+        }, 1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+
+  // 3. Aba ↔ URL. Sem isto, mandar "olha a aba Armadilhas" exige explicar o clique.
+  var tabs = document.querySelectorAll('[data-bs-toggle="tab"]');
+  if (!tabs.length) return;
+
+  function activateFromHash() {
+    var hash = window.location.hash;
+    if (!hash || hash.length < 2) return;
+    var target = document.querySelector(hash);
+    if (!target) return;
+    // O #hash pode apontar para o painel OU para um título dentro dele.
+    var pane = target.closest('.tab-pane') || (target.classList.contains('tab-pane') ? target : null);
+    if (!pane) return;
+    var trigger = document.querySelector('[data-bs-target="#' + CSS.escape(pane.id) + '"]');
+    if (trigger) bootstrap.Tab.getOrCreateInstance(trigger).show();
+    // O navegador já tentou rolar até o alvo — e falhou, porque naquele instante o
+    // painel ainda era display:none. Agora que apareceu, role de novo: sem isto a
+    // página abre num scroll intermediário, com as abas escondidas atrás da navbar.
+    var scrollTo = target !== pane ? target : (trigger && trigger.closest('[role="tablist"]')) || pane;
+    requestAnimationFrame(function () { scrollTo.scrollIntoView({ block: 'start' }); });
+  }
+
+  tabs.forEach(function (t) {
+    t.addEventListener('shown.bs.tab', function (e) {
+      var id = (e.target.getAttribute('data-bs-target') || '').slice(1);
+      // replaceState, não location.hash: mudar o hash direto faz a página pular.
+      if (id) history.replaceState(null, '', '#' + id);
+    });
+  });
+
+  window.addEventListener('hashchange', activateFromHash);
+  activateFromHash();
+})();
+</script>
+</body>
+</html>
