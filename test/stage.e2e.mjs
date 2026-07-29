@@ -50,9 +50,13 @@ const ctx = await chromium.launchPersistentContext(PROFILE, {
 });
 
 let failures = 0;
-const check = (name, fn) => {
+
+// `fn` may be async, and the result is awaited: a `() => void` contract silently
+// accepts an async callback whose rejection never reaches this try/catch, so a
+// failing assertion would be reported as a pass. Call sites must `await check`.
+const check = async (name, fn) => {
   try {
-    fn();
+    await fn();
     console.error(`  ✓ ${name}`);
   } catch (e) {
     failures++;
@@ -88,20 +92,20 @@ try {
   const baseline = await rects();
   const fpBefore = await page.evaluate(() => window.__demovid.fingerprint());
 
-  check("o bundle expõe window.__demovid", () => {
+  await check("o bundle expõe window.__demovid", () => {
     assert.ok(fpBefore, "fingerprint vazio");
   });
 
   const mounted = await page.evaluate(() => window.__demovid.mount());
   await page.waitForTimeout(250);
-  check("mount() monta palco e overlay, e diz a verdade sobre isso", () => {
+  await check("mount() monta palco e overlay, e diz a verdade sobre isso", () => {
     assert.ok(mounted.stage, `palco não montou: ${mounted.why ?? "motivo desconhecido"}`);
     assert.ok(mounted.overlay, "overlay não montou");
     assert.ok(mounted.adopted >= 6, `palco adotou só ${mounted.adopted} filhos`);
   });
 
   const afterMount = await rects();
-  check("os 5 padrões de position:fixed sobrevivem à montagem", () => {
+  await check("os 5 padrões de position:fixed sobrevivem à montagem", () => {
     assert.deepEqual(afterMount, baseline);
   });
 
@@ -109,13 +113,13 @@ try {
   await page.evaluate(() => document.getElementById("__demovid_stage").scrollTo({ top: 800 }));
   await page.waitForTimeout(250);
   const afterScroll = await rects();
-  check("rolando 800px, os fixed ficam parados (é onde o R0 morre)", () => {
+  await check("rolando 800px, os fixed ficam parados (é onde o R0 morre)", () => {
     assert.deepEqual(afterScroll, baseline);
   });
 
   // Zoom, e a asserção dura.
   const cam = await page.evaluate(() => window.__demovid.cameraFor("#alvo", 1.6));
-  check("cameraFor() resolve o alvo", () => {
+  await check("cameraFor() resolve o alvo", () => {
     assert.ok(cam && cam.k === 1.6, `câmera inválida: ${JSON.stringify(cam)}`);
   });
 
@@ -123,12 +127,12 @@ try {
   await page.waitForTimeout(300);
 
   const unscaled = await page.evaluate(() => window.__demovid.assertUnscaled());
-  check("com o palco em 1.6x, o overlay continua 1:1", () => {
+  await check("com o palco em 1.6x, o overlay continua 1:1", () => {
     assert.ok(unscaled.ok, unscaled.detail);
   });
 
   const zoomed = await rects();
-  check("o conteúdo do app realmente escalou", () => {
+  await check("o conteúdo do app realmente escalou", () => {
     const f = zoomed.header[2] / baseline.header[2];
     assert.ok(f > 1.5 && f < 1.7, `header escalou ${f.toFixed(2)}x, esperado ~1.6x`);
   });
@@ -138,7 +142,7 @@ try {
   await page.evaluate(() => document.getElementById("__demovid_stage").scrollTo({ top: 0 }));
   await page.waitForTimeout(300);
   const zoomedBack = await rects();
-  check("voltando à identidade, os rects voltam ao baseline", () => {
+  await check("voltando à identidade, os rects voltam ao baseline", () => {
     const diff = Object.keys(baseline)
       .filter((k) => JSON.stringify(baseline[k]) !== JSON.stringify(zoomedBack[k]))
       .map((k) => `${k}: ${JSON.stringify(baseline[k])} -> ${JSON.stringify(zoomedBack[k])}`);
@@ -157,7 +161,7 @@ try {
   await page.evaluate(() => window.__demovid.repromote());
   await page.waitForTimeout(200);
   const afterModal = await page.evaluate(() => window.__demovid.assertUnscaled());
-  check("repromote() sobrevive a um popover do próprio app", () => {
+  await check("repromote() sobrevive a um popover do próprio app", () => {
     assert.ok(afterModal.ok, afterModal.detail);
   });
 } finally {

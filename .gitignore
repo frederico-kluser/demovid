@@ -13,3 +13,6 @@ overlay/dist/
 *.wav
 .demovid-cache/
 src/generated/
+
+# local Claude Code settings (bootstrap Stop hook lives here, not committed)
+.claude/settings.local.json

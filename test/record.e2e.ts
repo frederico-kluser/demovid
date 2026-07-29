@@ -31,9 +31,17 @@ const APP = `data:text/html,${encodeURIComponent(`<!doctype html>
 <p>Hemograma completo e glicemia de jejum aguardando coleta.</p></div></main>`)}`;
 
 let failures = 0;
-const check = (name: string, fn: () => void): void => {
+
+/**
+ * `fn` is typed to allow a promise AND the result is awaited, because a
+ * `() => void` signature silently accepts an `async` callback: the rejection
+ * never reaches this try/catch, `failures` never increments, and the suite
+ * reports green while an assertion failed. tsc cannot see it. Every call site
+ * must therefore `await check(...)`.
+ */
+const check = async (name: string, fn: () => void | Promise<void>): Promise<void> => {
   try {
-    fn();
+    await fn();
     console.error(`  ✓ ${name}`);
   } catch (e) {
     failures++;
@@ -50,12 +58,12 @@ try {
   console.error(`  · browser: ${browser.browserPath}`);
   console.error(`  · janela X11: ${browser.windowId}`);
 
-  check("o window id resolvido é uma janela real", async () => {
+  await check("o window id resolvido é uma janela real", async () => {
     assert.match(browser.windowId, /^\d+$/, `id inesperado: ${browser.windowId}`);
   });
 
   const { stdout: geom } = await run("xdotool", ["getwindowgeometry", "--shell", browser.windowId]);
-  check("a janela tem o tamanho que pedimos", () => {
+  await check("a janela tem o tamanho que pedimos", () => {
     const w = Number(/^WIDTH=(\d+)$/m.exec(geom)?.[1] ?? 0);
     const h = Number(/^HEIGHT=(\d+)$/m.exec(geom)?.[1] ?? 0);
     assert.ok(w >= 1400 && w <= 1480, `largura ${w}, esperado ~1440`);
@@ -66,7 +74,7 @@ try {
   await browser.page.waitForSelector("#alvo", { state: "attached" });
 
   const mounted = await browser.page.evaluate(() => window.__demovid?.mount());
-  check("o overlay foi injetado pelo addInitScript do contexto", () => {
+  await check("o overlay foi injetado pelo addInitScript do contexto", () => {
     assert.ok(mounted, "window.__demovid não existe — o init script não rodou");
     assert.ok(mounted.stage, `palco não montou: ${mounted.why ?? "?"}`);
     assert.ok(mounted.overlay, "overlay não montou");
@@ -86,7 +94,7 @@ try {
     fps: 60,
   });
 
-  check("o rec iniciou e continua vivo", () => {
+  await check("o rec iniciou e continua vivo", () => {
     assert.ok(recording!.running, `rec morreu ao iniciar:\n${recording!.stderrTail}`);
   });
 
@@ -113,19 +121,19 @@ try {
   await sleep(2000);
 
   const unscaled = await browser.page.evaluate(() => window.__demovid!.assertUnscaled());
-  check("durante a gravação, o overlay segue 1:1", () => {
+  await check("durante a gravação, o overlay segue 1:1", () => {
     assert.ok(unscaled.ok, unscaled.detail);
   });
 
   // Exercita o pause, que é o toggle SIGUSR2.
   recording.setPaused(true);
   await sleep(700);
-  check("pause é refletido no estado", () => {
+  await check("pause é refletido no estado", () => {
     assert.equal(recording!.paused, true);
   });
   recording.setPaused(false);
   await sleep(1200);
-  check("resume volta o estado", () => {
+  await check("resume volta o estado", () => {
     assert.equal(recording!.paused, false);
   });
 
@@ -136,7 +144,7 @@ try {
   recording = null;
   console.error(`  · MP4: ${stopped.output} (${(stopped.bytes / 1024 / 1024).toFixed(2)} MB)`);
 
-  check("o MP4 saiu com tamanho plausível", () => {
+  await check("o MP4 saiu com tamanho plausível", () => {
     assert.ok(stopped.bytes > 50_000, `só ${stopped.bytes} bytes — provavelmente truncado`);
   });
 
@@ -147,7 +155,7 @@ try {
   ]);
   console.error(`  · ${probe.trim().split("\n").join(" · ")}`);
 
-  check("o container tem vídeo e áudio, e dura o que gravamos", () => {
+  await check("o container tem vídeo e áudio, e dura o que gravamos", () => {
     assert.match(probe, /codec_type=video/, "sem faixa de vídeo");
     assert.match(probe, /codec_type=audio/, "sem faixa de áudio (o som do sistema não entrou)");
     const d = Number(/duration=([\d.]+)/.exec(probe)?.[1] ?? 0);
@@ -162,7 +170,7 @@ try {
   ]).catch((e: unknown) => ({ stderr: String((e as { stderrTail?: string }).stderrTail ?? "") }));
   const meanDb = Number(/mean_volume:\s*(-?[\d.]+) dB/.exec(vol)?.[1] ?? NaN);
   console.error(`  · áudio: mean ${meanDb} dB`);
-  check("a faixa de áudio tem sinal, não silêncio", () => {
+  await check("a faixa de áudio tem sinal, não silêncio", () => {
     assert.ok(Number.isFinite(meanDb), `não consegui medir o volume: ${vol.slice(0, 160)}`);
     // Silêncio digital mede −91 dB. Fala normalizada a −14 LUFS fica bem acima.
     assert.ok(meanDb > -50, `mean_volume ${meanDb} dB — a faixa está praticamente muda`);
