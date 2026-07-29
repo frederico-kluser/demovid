@@ -47,5 +47,18 @@ await writeFile(
 );
 
 // addInitScript ships this as raw UTF-8 over CDP on every navigation and every
-// frame — gzip does not help. Size is a budget, so print it.
-console.error(`[build-overlay] ${(code.length / 1024).toFixed(1)} KB → src/generated/overlay-bundle.ts`);
+// frame — gzip does not help. Size is a budget, so print it AND enforce it.
+const kb = code.length / 1024;
+console.error(`[build-overlay] ${kb.toFixed(1)} KB → src/generated/overlay-bundle.ts`);
+
+// The overlay was 13.9 KB before `motion/mini` (11.2 KB) joined it. This ceiling
+// exists to catch the accidental import of the full `motion` build, which is
+// 61.8 KB and drags a per-frame rAF loop onto the main thread — precisely what
+// this overlay avoids by staying on the compositor.
+const BUDGET_KB = 34;
+if (kb > BUDGET_KB) {
+  throw new Error(
+    `o bundle do overlay passou de ${BUDGET_KB} KB (está em ${kb.toFixed(1)} KB). ` +
+      `A causa quase certa é um import de "motion" em vez de "motion/mini".`,
+  );
+}

@@ -1,11 +1,15 @@
 /**
  * Prova a integração mais arriscada do projeto, de ponta a ponta e de verdade:
- * abre o browser → resolve o window id no X11 → manda o `rec` gravar AQUELA
- * janela → monta o overlay → mexe a câmera → para o `rec` → confere o MP4.
+ * abre o browser → resolve o window id no X11 → grava AQUELA janela → monta o
+ * overlay → mexe a câmera → para o gravador → confere o MP4.
  *
  * Grava ~8 segundos reais. Nada é simulado.
  *
  *   node --import tsx test/record.e2e.ts
+ *
+ * Roda contra os dois backends. O fallback só é exercitado se for pedido:
+ *
+ *   DEMOVID_RECORDER=ffmpeg node --import tsx test/record.e2e.ts
  */
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
@@ -13,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { launchBrowser } from "../src/browser.js";
 import { run } from "../src/exec.js";
-import { previewCommand, startRecording } from "../src/rec.js";
+import { previewCommand, RecCapabilityError, startRecording } from "../src/rec.js";
 
 const OUT = join(tmpdir(), `demovid-e2e-${Date.now()}.mp4`);
 
@@ -80,7 +84,7 @@ try {
     assert.ok(mounted.overlay, "overlay não montou");
   });
 
-  const cmd = previewCommand({
+  const cmd = await previewCommand({
     target: { kind: "window", windowId: browser.windowId },
     output: OUT,
     audio: "system",
@@ -94,8 +98,9 @@ try {
     fps: 60,
   });
 
-  await check("o rec iniciou e continua vivo", () => {
-    assert.ok(recording!.running, `rec morreu ao iniciar:\n${recording!.stderrTail}`);
+  console.error(`  · backend: ${recording.backend}`);
+  await check("o gravador iniciou e continua vivo", () => {
+    assert.ok(recording!.running, `o gravador morreu ao iniciar:\n${recording!.stderrTail}`);
   });
 
   // Toca um tom pela Web Audio API. É o teste do caminho de áudio inteiro:
@@ -125,17 +130,31 @@ try {
     assert.ok(unscaled.ok, unscaled.detail);
   });
 
-  // Exercita o pause, que é o toggle SIGUSR2.
-  recording.setPaused(true);
-  await sleep(700);
-  await check("pause é refletido no estado", () => {
-    assert.equal(recording!.paused, true);
-  });
-  recording.setPaused(false);
-  await sleep(1200);
-  await check("resume volta o estado", () => {
-    assert.equal(recording!.paused, false);
-  });
+  // Exercita o pause, que no gsr é o toggle SIGUSR2. O fallback ffmpeg não tem
+  // pausa nenhuma — e o teste correto ali é provar que ele RECUSA, em vez de
+  // fingir que pausou.
+  if (recording.capabilities.pause) {
+    recording.setPaused(true);
+    await sleep(700);
+    await check("pause é refletido no estado", () => {
+      assert.equal(recording!.paused, true);
+    });
+    recording.setPaused(false);
+    await sleep(1200);
+    await check("resume volta o estado", () => {
+      assert.equal(recording!.paused, false);
+    });
+  } else {
+    await check("um backend sem pausa recusa pausar, em vez de mentir", () => {
+      assert.throws(
+        () => recording!.setPaused(true),
+        (e: unknown) => e instanceof RecCapabilityError && e.capability === "pause",
+        "deveria ter lançado RecCapabilityError",
+      );
+      assert.equal(recording!.paused, false, "o estado não pode ter mudado");
+    });
+    await sleep(1900);
+  }
 
   await browser.page.evaluate(() => window.__demovid!.setCamera({ tx: 0, ty: 0, k: 1 }));
   await sleep(1200);

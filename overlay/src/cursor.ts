@@ -14,17 +14,27 @@
  *  - **Path/timing**: Fitts's Law, `230 + 166·log2(D/W + 1)` ms, times the
  *    preset's `travelFactor`. Taken from ghost-cursor (MIT) *without* its jitter
  *    and random in-target offset — those exist to defeat bot detection, which is
- *    the opposite of what a demo wants. We aim at centres, deliberately.
- *  - **Easing**: Cap's springs, baked to CSS `linear()` at build time.
+ *    the opposite of what a demo wants. We aim at centres, deliberately. The
+ *    spring is expressed as `visualDuration` so this timing survives.
+ *  - **Easing**: Cap's spring constants, now run at runtime rather than baked,
+ *    so an interrupted travel resumes instead of restarting.
  *  - **Click feedback**: contract to 80 % over 130 ms (Cap `CURSOR_CLICK_DURATION`
- *    + `CLICK_SHRINK_SIZE`). It contracts; it is NOT a ripple. Screen Studio
- *    ships ripple/shockwave as separate opt-in effects on top.
+ *    + `CLICK_SHRINK_SIZE`). It contracts; it is NOT a ripple.
  *
- * The travelling ring is the other half: interactive-demo tools (Storylane) use
- * an expanding ring as an *affordance* ("click here"), recorders use the contract
- * as *feedback* ("a click happened"). A narrated demo needs both, at different
- * moments — ring while travelling, contract at the instant of the click.
+ * ## Why four nested elements instead of one
+ *
+ * Three transform channels act on the cursor at once — where it is, how much it
+ * counter-scales against the camera, and the click contraction — and a single
+ * element can only hold one `transform`. The previous version wrote all three
+ * into the same string, so each one clobbered the others: `setStageZoom` wrote
+ * `scale(s)` and stored it in `--demovid-cursor-counter`, then the very next
+ * `moveTo` wrote `scale(1)` and threw it away. That custom property was written
+ * and never read anywhere, and under zoom the cursor was simply the wrong size.
+ *
+ * One element per channel makes the composition the browser's job, and each
+ * animation can be interrupted without disturbing the others.
  */
+import { cancelAnim, springTo, bounceFor, type SpringSpec } from "./anim.js";
 import type { BakedSpring } from "../../src/generated/springs.js";
 
 export interface CursorStyle {
@@ -33,6 +43,8 @@ export interface CursorStyle {
   spring: BakedSpring;
   accent: string;
   ring: { toPx: number; strokePx: number; durationMs: number } | null;
+  /** Click contraction. Defaults match Cap's constants. */
+  click?: { shrinkTo: number; ms: number };
 }
 
 /** Fitts's Law. MacKenzie's constants; `W` is the target's smaller dimension. */
@@ -42,7 +54,15 @@ export function travelMs(distance: number, targetW: number, factor: number): num
   return Math.round(ms * factor);
 }
 
+const point = "position:absolute; left:0; top:0; width:0; height:0;";
+
 export class Cursor {
+  /** Owns position only. */
+  #travel: HTMLElement;
+  /** Owns the counter-scale against the camera only. */
+  #zoom: HTMLElement;
+  /** Owns the click contraction only. */
+  #click: HTMLElement;
   #dot: HTMLElement;
   #ring: HTMLElement;
   #style: CursorStyle;
@@ -52,23 +72,46 @@ export class Cursor {
   constructor(root: ShadowRoot, style: CursorStyle) {
     this.#style = style;
 
-    const dot = document.createElement("div");
-    dot.className = "demovid-cursor";
-    dot.style.cssText =
-      `position:fixed; left:0; top:0; width:${style.dotPx}px; height:${style.dotPx}px;` +
-      `margin-left:${-style.dotPx / 2}px; margin-top:${-style.dotPx / 2}px;` +
-      `border-radius:50%; background:${style.accent}; opacity:0;` +
-      `box-shadow:0 1px 3px rgba(0,0,0,.35), 0 0 0 2px rgba(255,255,255,.9);` +
-      `pointer-events:none; will-change:transform;` +
-      `transform:translate3d(-100px,-100px,0) scale(1);`;
+    const travel = document.createElement("div");
+    travel.className = "demovid-cursor";
+    travel.style.cssText =
+      `position:fixed; left:0; top:0; width:0; height:0; opacity:0;` +
+      `pointer-events:none; transform:translate3d(-100px,-100px,0);`;
 
     const ring = document.createElement("div");
     ring.className = "demovid-cursor-ring";
+    const toPx = style.ring?.toPx ?? 0;
     ring.style.cssText =
-      `position:fixed; left:0; top:0; border-radius:50%; opacity:0;` +
-      `border:${style.ring?.strokePx ?? 0}px solid ${style.accent}; pointer-events:none;`;
+      `position:absolute; left:0; top:0; width:${toPx}px; height:${toPx}px;` +
+      `margin-left:${-toPx / 2}px; margin-top:${-toPx / 2}px; border-radius:50%;` +
+      `border:${style.ring?.strokePx ?? 0}px solid ${style.accent};` +
+      `opacity:0; pointer-events:none; transform:scale(0.2);`;
 
-    root.append(ring, dot);
+    const zoom = document.createElement("div");
+    zoom.className = "demovid-cursor-zoom";
+    zoom.style.cssText = `${point} transform:scale(1);`;
+
+    const click = document.createElement("div");
+    click.className = "demovid-cursor-click";
+    click.style.cssText = `${point} transform:scale(1);`;
+
+    const dot = document.createElement("div");
+    dot.className = "demovid-cursor-dot";
+    dot.style.cssText =
+      `position:absolute; left:0; top:0; width:${style.dotPx}px; height:${style.dotPx}px;` +
+      `margin-left:${-style.dotPx / 2}px; margin-top:${-style.dotPx / 2}px;` +
+      `border-radius:50%; background:${style.accent};` +
+      `box-shadow:0 1px 3px rgba(0,0,0,.35), 0 0 0 2px rgba(255,255,255,.9);` +
+      `pointer-events:none; will-change:transform;`;
+
+    click.append(dot);
+    zoom.append(click);
+    travel.append(ring, zoom);
+    root.append(travel);
+
+    this.#travel = travel;
+    this.#zoom = zoom;
+    this.#click = click;
     this.#dot = dot;
     this.#ring = ring;
   }
@@ -77,13 +120,17 @@ export class Cursor {
     return { x: this.#x, y: this.#y };
   }
 
+  /** The travel spring, keeping Fitts's measured duration. */
+  #travelSpec(ms: number): SpringSpec {
+    return { visualDurationMs: ms, bounce: bounceFor(this.#style.spring.zeta) };
+  }
+
   show(): void {
-    this.#dot.style.opacity = "1";
+    this.#travel.style.opacity = "1";
   }
 
   hide(): void {
-    this.#dot.style.opacity = "0";
-    this.#ring.style.opacity = "0";
+    this.#travel.style.opacity = "0";
   }
 
   /**
@@ -93,79 +140,87 @@ export class Cursor {
    * at exactly constant size detaches visually from the content it is pointing
    * at. Balloons want `1.0` — they are chrome. The cursor is halfway between
    * chrome and content, so it grows a little.
+   *
+   * Lives on its own element, so nothing else can overwrite it. That is the
+   * whole reason this class has four nodes.
    */
   setStageZoom(k: number): void {
     const s = 1 / Math.sqrt(Math.max(1, k));
-    this.#dot.style.setProperty("--demovid-cursor-counter", String(s));
-    this.#dot.style.transform = `translate3d(${this.#x}px, ${this.#y}px, 0) scale(${s})`;
+    void springTo(this.#zoom, "transform", `scale(${s})`, this.#travelSpec(420), 420);
   }
 
   /** Jump with no animation. For the first placement, before the cursor is shown. */
   placeAt(x: number, y: number): void {
     this.#x = x;
     this.#y = y;
-    this.#dot.style.transition = "none";
-    this.#dot.style.transform = `translate3d(${x}px, ${y}px, 0) scale(1)`;
-    void this.#dot.offsetWidth;
+    // A live WAAPI animation overrides inline styles, so the write below would
+    // silently do nothing while one is still parked here.
+    cancelAnim(this.#travel, "transform");
+    this.#travel.style.transform = `translate3d(${x}px, ${y}px, 0)`;
   }
 
-  /** Glide to a point. Resolves when it arrives. */
-  moveTo(x: number, y: number, targetW = 40): Promise<void> {
+  /** Glide to a point. Resolves when it arrives — or when it is superseded. */
+  async moveTo(x: number, y: number, targetW = 40): Promise<void> {
     const d = Math.hypot(x - this.#x, y - this.#y);
     const ms = travelMs(d, targetW, this.#style.travelFactor);
 
     this.#x = x;
     this.#y = y;
-    this.#dot.style.transition = `transform ${ms}ms ${this.#style.spring.easing}`;
-    this.#dot.style.transform = `translate3d(${x}px, ${y}px, 0) scale(1)`;
 
-    this.#showRing(x, y, ms);
-    return new Promise((r) => setTimeout(r, ms));
+    this.#showRing(ms);
+    await springTo(
+      this.#travel,
+      "transform",
+      `translate3d(${x}px, ${y}px, 0)`,
+      this.#travelSpec(ms),
+      ms,
+    ).finished;
   }
 
   /**
-   * The ring travels with the cursor and fades as it arrives — anticipation, so
-   * the viewer's eye is already at the target when the click lands.
+   * The ring travels with the cursor — it is a child of the travel node — and
+   * fades as it arrives, so the viewer's eye is already at the target when the
+   * click lands.
+   *
+   * Animates `scale` and `opacity` only. The previous version animated `width`,
+   * `height` and `margin`, four non-composited properties held for up to 1.5 s
+   * during a 60 fps capture — every frame of it a layout.
    */
-  #showRing(x: number, y: number, travelDurationMs: number): void {
+  #showRing(travelDurationMs: number): void {
     const cfg = this.#style.ring;
     if (!cfg) return;
     const r = this.#ring;
-    r.style.transition = "none";
-    r.style.width = `${this.#style.dotPx}px`;
-    r.style.height = `${this.#style.dotPx}px`;
-    r.style.marginLeft = `${-this.#style.dotPx / 2}px`;
-    r.style.marginTop = `${-this.#style.dotPx / 2}px`;
-    r.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+
+    cancelAnim(r, "transform");
+    cancelAnim(r, "opacity");
+    r.style.transform = "scale(0.2)";
     r.style.opacity = "0.75";
-    void r.offsetWidth;
 
     const dur = Math.min(cfg.durationMs, travelDurationMs + 200);
-    r.style.transition = `width ${dur}ms ease-out, height ${dur}ms ease-out,` +
-      `margin ${dur}ms ease-out, opacity ${dur}ms ease-out`;
-    r.style.width = `${cfg.toPx}px`;
-    r.style.height = `${cfg.toPx}px`;
-    r.style.marginLeft = `${-cfg.toPx / 2}px`;
-    r.style.marginTop = `${-cfg.toPx / 2}px`;
-    r.style.opacity = "0";
+    const spec: SpringSpec = { visualDurationMs: dur, bounce: 0 };
+    void springTo(r, "transform", "scale(1)", spec, dur);
+    void springTo(r, "opacity", 0, spec, dur);
   }
 
   /**
-   * Click feedback: contract to 80 % and back, 130 ms.
+   * Click feedback: contract and release.
    *
-   * Two bugs from Screenity's implementation are deliberately avoided here. They
-   * reset the transform at 350 ms while opacity is still fading to 0 at 500 ms,
-   * so their ring visibly re-expands during its last ~150 ms — we hold the reset
-   * until the full duration. And their at-rest transform is `none` rather than a
-   * centring translate, so their first click jumps by half the ring's size — our
-   * transform always carries the position.
+   * On its own element, so it cannot fight the counter-scale — which is exactly
+   * what happened when both wrote the same `transform`.
    */
   async click(): Promise<void> {
-    const base = `translate3d(${this.#x}px, ${this.#y}px, 0)`;
-    this.#dot.style.transition = "transform 130ms cubic-bezier(.25,.8,.25,1)";
-    this.#dot.style.transform = `${base} scale(0.8)`;
-    await new Promise((r) => setTimeout(r, 130));
-    this.#dot.style.transform = `${base} scale(1)`;
-    await new Promise((r) => setTimeout(r, 130));
+    const { shrinkTo, ms } = this.#style.click ?? { shrinkTo: 0.8, ms: 130 };
+    const spec: SpringSpec = { visualDurationMs: ms, bounce: 0 };
+    await springTo(this.#click, "transform", `scale(${shrinkTo})`, spec, ms).finished;
+    await springTo(this.#click, "transform", "scale(1)", spec, ms).finished;
+  }
+
+  /** Exposed for the e2e: the counter-scale must survive a move. */
+  get zoomElement(): HTMLElement {
+    return this.#zoom;
+  }
+
+  get dotElement(): HTMLElement {
+    return this.#dot;
   }
 }

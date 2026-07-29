@@ -7,10 +7,15 @@ import { parseArgs } from "node:util";
 import { parse as parseYaml } from "yaml";
 import { doctor } from "./doctor.js";
 import { BinaryNotFoundError, CommandFailedError } from "./exec.js";
-import { RecError } from "./rec.js";
+import { importSessionEnv, RecCapabilityError, RecError } from "./rec.js";
+import { restore } from "./annotate.js";
+import { isInteractive } from "./prompt.js";
 import { record } from "./record.js";
+import { scriptFlow } from "./scriptflow.js";
+import { parseResolutionSpec, planCapture, resolutionNames, type CapturePlan } from "./resolution.js";
 import { parseStoryboard } from "./storyboard.js";
 import { TtsError } from "./openai/tts.js";
+import { frameExtents, listMonitors, workArea } from "./x11.js";
 
 const HELP = `demovid — vídeos de demonstração narrados, de qualquer projeto frontend
 
@@ -18,24 +23,40 @@ USAGE
   demovid <command> [options]
 
 COMMANDS
-  doctor                      Checa o ambiente: rec, Brave, ffmpeg, X11, chave da OpenAI
-  script <dir|url>            O agente explora o app e escreve um demo.yaml de rascunho
-  refine <demo.yaml> "<...>"  Descreve em português o que mudar; a IA regenera o YAML
-  voice <demo.yaml>           Sintetiza a narração (uma chamada por frase) + manifesto por hash
+  (sem comando)               Dentro de um projeto: varre, pergunta o que demonstrar,
+                              escreve o roteiro com IA, ensaia, mostra e grava
+  script [dir]                O mesmo, explicitamente (padrão: diretório atual)
+  doctor                      Checa o ambiente: gravador, browser, ffmpeg, X11, OpenAI
   rehearse <demo.yaml>        Ensaio: valida seletores e a câmera SEM gravar
-  record <demo.yaml>          Grava de verdade e entrega o MP4
+  record <demo.yaml>          Grava de verdade e entrega o MP4 + a timeline
+  restore [dir]               Desfaz anotações que o demovid tenha deixado no seu código
 
 OPTIONS
   -o, --out <file>            Caminho de saída ("-" = stdout, onde fizer sentido)
-      --preset <name>         boardroom | helpdesk           (padrão: boardroom)
-      --camera <rung>         auto | R1 | R2 | R3            (padrão: auto)
-      --quality <mode>        smooth | crisp                 (padrão: smooth)
+      --res <formato>         Resolução da gravação. Aceita um preset, um WxH,
+                              ou o nome de um device do Playwright:
+                                720p 1080p 1440p desktop square reels mobile tablet
+                                1920x1080 · "iPhone 15" · "Pixel 7"
+                              Formato que não couber na tela é capturado no maior
+                              tamanho possível e ampliado no final.
+      --monitor <nome>        Em qual saída gravar (padrão: a primária)
+      --chrome <modo>         auto | crop | keep             (padrão: auto)
+                              Se a barra do browser entra no vídeo. \`auto\` e
+                              \`crop\` a removem — junto com qualquer aviso que o
+                              browser resolva mostrar ali — ao custo de um passe
+                              de ffmpeg. \`keep\` mantém o passe único puro.
       --locale <tag>          pt-BR | en-US                  (padrão: pt-BR)
       --browser <path>        Executável do browser (padrão: detecta Brave)
+  -y, --yes                   Pula o portão de aprovação e grava direto
+      --about "<texto>"       O que demonstrar, em vez de perguntar (uso não-interativo)
+      --url <url>             Usa esta URL em vez de subir o servidor de dev
   -n, --dry-run               Mostra o que faria e sai
       --deep                  No \`doctor\`: gasta uma chamada mínima pra provar que há saldo
   -v, --verbose               Log detalhado no stderr
   -h, --help                  Esta ajuda
+
+ENV
+  DEMOVID_RECORDER            gsr | ffmpeg — força o backend de captura
 
 ENVIRONMENT
   OPENAI_API_KEY              Obrigatória para \`script\`, \`refine\` e \`voice\`
@@ -51,10 +72,32 @@ EXAMPLES
   demovid record demo.yaml --preset helpdesk
 `;
 
-const NOT_YET: Record<string, string> = {
-  script: "src/openai/script.ts",
-  refine: "src/openai/script.ts",
+type CliValues = {
+  out?: string | undefined;
+  res?: string | undefined;
+  monitor?: string | undefined;
+  chrome?: string | undefined;
+  yes?: boolean | undefined;
+  about?: string | undefined;
+  url?: string | undefined;
 };
+
+/** Build the guided flow's options out of the parsed flags. */
+async function runScriptFlow(dir: string, values: CliValues): Promise<number> {
+  const capture = await buildCapturePlan(values.res, values.monitor);
+  const chrome = values.chrome === "keep" || values.chrome === "crop" ? values.chrome : "auto";
+  return scriptFlow({
+    dir,
+    yes: values.yes ?? false,
+    about: values.about,
+    url: values.url,
+    recording: {
+      output: values.out ?? "",
+      chrome,
+      ...(capture ? { capture } : {}),
+    },
+  });
+}
 
 /**
  * Carrega e valida um demo.yaml. Erros do zod já nomeiam o passo culpado.
@@ -73,18 +116,81 @@ async function loadStoryboard(path: string): Promise<ReturnType<typeof parseStor
   return sb;
 }
 
-async function runRecord(path: string, rehearse: boolean, out: string | undefined): Promise<number> {
+interface RunRecordOptions {
+  rehearse: boolean;
+  out?: string | undefined;
+  res?: string | undefined;
+  monitor?: string | undefined;
+  chrome?: string | undefined;
+  preset?: string | undefined;
+  locale?: string | undefined;
+}
+
+/**
+ * Resolve `--res` into a concrete plan. Returns undefined when the user did not
+ * ask for a format, which keeps the historical window size and, with it, the
+ * guarantee that nothing is post-processed.
+ */
+async function buildCapturePlan(
+  spec: string | undefined,
+  monitorName: string | undefined,
+): Promise<CapturePlan | undefined> {
+  if (!spec) return undefined;
+
+  const preset = parseResolutionSpec(spec);
+  if (!preset) {
+    throw new Error(
+      `resolução desconhecida: "${spec}". ` +
+        `Use um preset (${resolutionNames().join(", ")}), um WxH como 1920x1080, ` +
+        `ou o nome de um device do Playwright como "iPhone 15".`,
+    );
+  }
+
+  const [monitors, area, frame] = await Promise.all([
+    listMonitors().catch(() => []),
+    workArea(),
+    frameExtents(),
+  ]);
+
+  return planCapture(preset, {
+    monitors,
+    area,
+    frame,
+    ...(monitorName ? { monitorName } : {}),
+  });
+}
+
+async function runRecord(path: string, o: RunRecordOptions): Promise<number> {
   const sb = await loadStoryboard(path);
-  const output = out ?? resolve(
+  // CLI overrides the storyboard, and only when actually given. These two used
+  // to be parsed and thrown away — the flags existed in `--help` and did
+  // nothing at all.
+  if (o.preset) sb.preset = o.preset;
+  if (o.locale) sb.locale = o.locale;
+
+  const output = o.out ?? resolve(
     process.env["DEMOVID_REC_DIR"] ?? `${process.env["HOME"]}/Videos`,
     `${basename(path).replace(/\.ya?ml$/, "")}.mp4`,
   );
+
+  const capture = await buildCapturePlan(o.res, o.monitor);
+  if (capture) {
+    console.warn(
+      `[demovid] formato: ${capture.label} → janela ${capture.window.w}x${capture.window.h} ` +
+        `em ${capture.monitor} (dsf ${capture.deviceScaleFactor}, viewport ` +
+        `${capture.cssViewport.w}x${capture.cssViewport.h}${capture.mobile ? ", mobile" : ""})`,
+    );
+  }
+
+  const chrome = o.chrome === "keep" || o.chrome === "crop" ? o.chrome : "auto";
 
   const t0 = Date.now();
   const report = await record({
     storyboard: sb,
     output,
-    rehearse,
+    rehearse: o.rehearse,
+    chrome,
+    ...(capture ? { capture } : {}),
     onLog: (l) => console.warn(`[demovid] ${l}`),
   });
 
@@ -102,28 +208,45 @@ async function runRecord(path: string, rehearse: boolean, out: string | undefine
   console.warn(`[demovid] câmera: ${report.cameraRung}${report.cameraRung === "R3" ? " (sem zoom)" : ""}`);
   for (const w of report.warnings) console.warn(`[demovid] aviso: ${w}`);
 
-  if (rehearse) {
+  if (o.rehearse) {
     console.warn(`[demovid] ensaio concluído em ${((Date.now() - t0) / 1000).toFixed(1)}s — nada foi gravado.`);
   } else if (report.output) {
+    const v = report.video;
     console.warn(
       `[demovid] pronto: ${report.output} (${(report.bytes / 1024 / 1024).toFixed(1)} MB, ` +
-        `${((Date.now() - t0) / 1000).toFixed(0)}s)`,
+        `${((Date.now() - t0) / 1000).toFixed(0)}s` +
+        (v ? `, ${v.width}x${v.height} @${v.fps}fps, ${(v.durationMs / 1000).toFixed(1)}s` : "") +
+        `)`,
     );
+    if (report.timeline) console.warn(`[demovid] timeline: ${report.timeline}`);
     process.stdout.write(`${report.output}\n`);
   }
   return failed.length > 0 ? 1 : 0;
 }
 
 async function main(): Promise<void> {
+  // Before anything reads DISPLAY. When demovid runs from a shell that did not
+  // inherit the graphical session — an agent, a cron job — both the recorder
+  // AND the browser are blind without this, and the resulting error names
+  // neither of them.
+  await importSessionEnv();
+
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
       out: { type: "string", short: "o" },
-      preset: { type: "string", default: "boardroom" },
-      camera: { type: "string", default: "auto" },
-      quality: { type: "string", default: "smooth" },
-      locale: { type: "string", default: "pt-BR" },
+      res: { type: "string" },
+      monitor: { type: "string" },
+      chrome: { type: "string", default: "auto" },
+      // `preset` and `locale` have no default on purpose: absent means "use
+      // what the storyboard says", and a default here would silently override
+      // the YAML on every run.
+      preset: { type: "string" },
+      locale: { type: "string" },
       browser: { type: "string" },
+      yes: { type: "boolean", short: "y", default: false },
+      about: { type: "string" },
+      url: { type: "string" },
       "dry-run": { type: "boolean", short: "n", default: false },
       deep: { type: "boolean", default: false },
       verbose: { type: "boolean", short: "v", default: false },
@@ -133,9 +256,21 @@ async function main(): Promise<void> {
 
   const cmd = positionals[0];
 
-  if (values.help || cmd === undefined) {
+  if (values.help) {
     process.stdout.write(HELP);
-    process.exit(values.help ? 0 : 1);
+    process.exit(0);
+  }
+
+  // `npx demovid` with no arguments is the guided flow — but only when there is
+  // someone there to answer it. Behind a pipe or in CI, blocking on a read that
+  // never returns would look like a hang, so print the help instead.
+  if (cmd === undefined) {
+    if (!isInteractive() && !values.about) {
+      console.error("[demovid] sem terminal interativo — use `--about \"...\"` ou veja a ajuda.\n");
+      process.stdout.write(HELP);
+      process.exit(1);
+    }
+    process.exit(await runScriptFlow(process.cwd(), values));
   }
 
   switch (cmd) {
@@ -152,28 +287,31 @@ async function main(): Promise<void> {
         process.stdout.write(HELP);
         process.exit(1);
       }
-      process.exit(await runRecord(file, cmd === "rehearse", values.out));
-      break;
-    }
-    case "voice": {
-      const file = positionals[1];
-      if (!file) {
-        console.error("[demovid] `voice` precisa de um demo.yaml\n");
-        process.exit(1);
-      }
-      // `record --rehearse` já sintetiza tudo e não grava nada; `voice` é o
-      // mesmo trabalho sem abrir o browser, então reaproveita o caminho.
-      console.error("[demovid] `voice` avulso ainda não existe — use `demovid rehearse`, que já sintetiza.");
-      process.exit(2);
-      break;
-    }
-    case "script":
-    case "refine": {
-      console.error(
-        `[demovid] \`${cmd}\` ainda não está implementado — o módulo é ${NOT_YET[cmd]}.\n` +
-          `[demovid] Escreva o demo.yaml à mão por enquanto; \`demovid rehearse\` valida.`,
+      process.exit(
+        await runRecord(file, {
+          rehearse: cmd === "rehearse",
+          out: values.out,
+          res: values.res,
+          monitor: values.monitor,
+          chrome: values.chrome,
+          preset: values.preset,
+          locale: values.locale,
+        }),
       );
-      process.exit(2);
+      break;
+    }
+    case "script": {
+      process.exit(await runScriptFlow(positionals[1] ?? process.cwd(), values));
+      break;
+    }
+    case "restore": {
+      const dir = resolve(positionals[1] ?? process.cwd());
+      const r = await restore(dir);
+      console.error(
+        `[demovid] ${r.reverted} edição(ões) desfeita(s), ${r.alreadyGone} já não existiam.`,
+      );
+      for (const c of r.conflicts) console.error(`[demovid] conflito: ${c}`);
+      process.exit(r.conflicts.length > 0 ? 1 : 0);
       break;
     }
     default:
@@ -188,6 +326,7 @@ main().catch((err: unknown) => {
     err instanceof BinaryNotFoundError ||
     err instanceof CommandFailedError ||
     err instanceof RecError ||
+    err instanceof RecCapabilityError ||
     err instanceof TtsError
   ) {
     console.error(`[demovid] ${err.message}`);

@@ -7,8 +7,8 @@
  * an OpenAI key present but out of quota, a capture already running).
  */
 import { access, constants } from "node:fs/promises";
-import { join } from "node:path";
-import { run } from "./exec.js";
+import { run, which } from "./exec.js";
+import { findRunningCaptures, resolveBackend } from "./rec.js";
 
 export interface DoctorOptions {
   /** Faz UMA chamada faturável mínima para provar que há saldo, não só chave válida. */
@@ -30,20 +30,6 @@ async function exists(path: string): Promise<boolean> {
     () => true,
     () => false,
   );
-}
-
-/**
- * PATH lookup in pure Node. Deliberately NOT `sh -c "command -v"` — that would
- * be a shell, which AGENTS.md forbids, and `command` is a shell builtin so it
- * cannot be exec'd directly anyway.
- */
-async function which(bin: string): Promise<string | null> {
-  for (const dir of (process.env["PATH"] ?? "").split(":")) {
-    if (!dir) continue;
-    const p = join(dir, bin);
-    if (await exists(p)) return p;
-  }
-  return null;
 }
 
 /** Candidate Chromium-family browsers, in the order we would pick them. */
@@ -68,32 +54,36 @@ export async function doctor(opts: DoctorOptions = {}): Promise<boolean> {
   const checks: Check[] = [];
   const push = (name: string, level: Level, detail: string) => checks.push({ name, level, detail });
 
-  // ── rec ────────────────────────────────────────────────────────────────────
-  const recPath = await which("rec");
-  if (!recPath) {
-    push("rec", "fail", "não está no PATH — rode ~/Projects/rec/install.sh");
-  } else {
-    let gsr = "backend desconhecido";
-    try {
-      const { stdout } = await run("gpu-screen-recorder", ["--version"]);
-      gsr = `gpu-screen-recorder ${stdout.trim()}`;
-    } catch {
-      gsr = "gpu-screen-recorder AUSENTE (é o backend do rec)";
-    }
-    push("rec", gsr.includes("AUSENTE") ? "fail" : "ok", `${recPath} · ${gsr}`);
+  // ── gravador ───────────────────────────────────────────────────────────────
+  //
+  // Não há mais dependência de wrapper externo: a lógica dele vive em
+  // `src/recorder/`. O que importa reportar agora é QUAL backend será usado e
+  // o que ele não sabe fazer, porque as capacidades dos dois diferem de verdade.
+  try {
+    const { backend, binPath, why } = await resolveBackend();
+    const caps = backend.capabilities;
+    const missing: string[] = [];
+    if (!caps.pause) missing.push("sem pausa");
+    if (!caps.followsWindow) missing.push("não segue a janela se ela mover");
+    push(
+      "gravador",
+      backend.name === "gsr" ? "ok" : "warn",
+      `${backend.name} · ${binPath} — ${why}${missing.length ? ` (${missing.join(", ")})` : ""}`,
+    );
+  } catch (e) {
+    push("gravador", "fail", (e as Error).message);
   }
 
-  // Uma captura já rodando faz o `rec` recusar iniciar (bin/rec:142).
-  try {
-    const { stdout } = await run("pgrep", ["-f", "gpu-screen-recorder -w"]);
-    if (stdout.trim()) {
-      push("captura em curso", "fail", `já há gravação rodando (pid ${stdout.trim().split("\n").join(", ")}) — pare com \`recstop\``);
-    } else {
-      push("captura em curso", "ok", "nenhuma");
-    }
-  } catch {
-    push("captura em curso", "ok", "nenhuma");
-  }
+  // Uma captura já rodando impede iniciar outra. Lido de /proc, não por pgrep:
+  // o argv real distingue uma captura de um `--list-monitors`.
+  const busy = await findRunningCaptures();
+  push(
+    "captura em curso",
+    busy.length > 0 ? "fail" : "ok",
+    busy.length > 0
+      ? `já há gravação rodando (pid ${busy.map((b) => b.pid).join(", ")}) — pare-a antes`
+      : "nenhuma",
+  );
 
   // ── sessão gráfica ─────────────────────────────────────────────────────────
   const sessionType = process.env["XDG_SESSION_TYPE"] ?? "(indefinido)";
@@ -135,7 +125,7 @@ export async function doctor(opts: DoctorOptions = {}): Promise<boolean> {
   push(
     "xdotool",
     xdotool ? "ok" : "fail",
-    xdotool ?? "ausente — é como descobrimos o id da janela do browser para o `rec --window-id`",
+    xdotool ?? "ausente — é como descobrimos o id da janela do browser para capturar só ela",
   );
 
   // ── ffmpeg ─────────────────────────────────────────────────────────────────

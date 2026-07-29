@@ -58,7 +58,12 @@ CLI (src/index.ts)  →  record()  (src/record.ts, the conductor)
 |---|---|---|
 | Order of operations | `src/record.ts` | anywhere |
 | External binaries | `run()` in `src/exec.ts:68@a394a34` | any module |
-| Recorder process + signals | `src/rec.ts` | `src/record.ts` |
+| Recorder process + signals | `src/recorder/**` (`src/rec.ts` is a re-export facade) | `src/record.ts` |
+| Which resolution fits the screen | `src/resolution.ts` | `src/record.ts` |
+| Reading X11 (monitors, work area, geometry) | `src/x11.ts` | anywhere |
+| Timing of everything, for the sidecar | `src/timeline.ts` | `src/record.ts` (it only marks) |
+| Discovering the app's addressable elements | `src/project/inventory.ts` | the model's prompt |
+| The guided flow's order | `src/scriptflow.ts` | `src/index.ts` (it only parses flags) |
 | Camera transform | `overlay/src/stage.ts` | `src/record.ts` (it only sets state) |
 | Look and pace | `src/presets/**` | the overlay (it receives style, never defines it) |
 | What the demo does | the user's `demo.yaml` | presets — they never carry `scenes` (`src/presets/types.ts:12-13@a394a34`) |
@@ -80,7 +85,7 @@ Only `R1` and `R3` are ever produced (`src/record.ts:65@a394a34`). `R0` — tran
 | Video has no audio | `src/record.ts` clip serving, then the sink | Route interception on `https://demovid.invalid` (`src/record.ts:30@a394a34`); an audio *track* can exist and be silent |
 | Camera does not move | `mount()` returned `stage:false` → rung `R3` | Degrades on purpose rather than failing (`src/record.ts:186-193@a394a34`) |
 | Balloon in the wrong place | `overlay/src/balloon.ts`, not the storyboard | Placement is computed from a live rect |
-| Recorder still running after a crash | `Recording.dispose()` | Cleanup must never consult `running` (`src/rec.ts:201-226@a394a34`) |
+| Recorder still running after a crash | `Recording.dispose()` | Cleanup must never consult `running` (`src/recorder/index.ts:266@72303c9`) |
 | Green typecheck, red build | the two tsconfigs | See `following-typescript-conventions` |
 
 ## References

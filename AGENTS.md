@@ -4,24 +4,33 @@ Single source of truth for agents working in demovid. Kept short on purpose
 (long always-on files reduce adherence). Deep, on-demand knowledge lives in the
 skills — see below.
 
-demovid turns any frontend project into a narrated demo video: a Playwright-driven
-Chromium loads the app, an injected overlay draws speech balloons / a synthetic
-cursor / a spotlight, pre-rendered OpenAI TTS plays through the speakers, and the
-user's `rec` captures the browser window with system audio. **One pass, no
-post-production.**
+demovid turns any frontend project into a narrated demo video. Run it inside the
+project: it scans the app, asks in Portuguese what to demonstrate, has `gpt-5.4`
+write the storyboard from the app's *verified* elements, rehearses it, and then
+records. A Playwright-driven Chromium loads the app, an injected overlay draws
+speech balloons / a synthetic cursor / a spotlight, pre-rendered OpenAI TTS plays
+through the speakers, and `gpu-screen-recorder` (or an ffmpeg fallback) captures
+the browser window with system audio. Out comes an MP4 **and** a
+`.timeline.json` with every line's timing and scored cut points.
 
 ## Commands
 - build: `npm run build` (bundles the overlay, then `tsc`)
 - typecheck: `npm run typecheck`
 - test: `npm test` — single file: `node --import tsx --test test/<name>.test.ts`
+- everything: `npm run verify` (typecheck → springs → build → unit → 2 browser e2e)
 - environment check: `npm run dev -- doctor` (add `--deep` to prove OpenAI has credit)
+- the guided flow: `npm run dev -- script <dir> --about "..." --yes`
 - lint/format: none configured. The quality gate is `npm run typecheck` + `npm test`.
 
 ## Rules (only what differs from language defaults AND is not tooling-guaranteed)
 
 - **No-shell process spawning.** Call external binaries via `run(bin, args[])` in `src/exec.ts` (array args, no shell). Why: untrusted paths can't be injected. Consequence: no pipes/redirects — use tool flags, and do PATH lookup in Node (`which()` in `doctor.ts`), never `sh -c "command -v"`. Scope: every rec/ffmpeg/ffprobe/xdotool call.
-- **Own the `rec` child; never `pkill`.** `bin/rec` ends in `exec`, so the spawned PID *is* `gpu-screen-recorder`. Stop with **SIGINT** (SIGKILL truncates the container — no moov atom). Pause is **SIGUSR2 and it is a toggle**, so track the state and reconcile against the `Paused`/`Unpaused` lines on stderr. Why: `pkill -f` would also kill a recording the user started themselves. Scope: `src/rec.ts`.
-- **Invoke `rec`, never `gpu-screen-recorder`.** `rec_import_session_env()` scrapes the graphical-session env out of the compositor's `/proc/<pid>/environ`; without it, capture from an agent context dies with `for_each_active_monitor_output_drm failed`. Scope: anything that starts a capture.
+- **Own the recorder child; never `pkill`.** demovid spawns the encoder directly, so the PID it holds *is* the recorder. Stop with **SIGINT** (SIGKILL truncates the container — no moov atom). Pause is **SIGUSR2 and it is a toggle**, so track the state and reconcile against the `Paused`/`Unpaused` lines on stderr. `running` is `exitCode === null && signalCode === null`, never `!child.killed` — Node sets `killed` after any successful signal and SIGUSR2 made it lie. Why: `pkill -f` would also kill a recording the user started themselves. Scope: `src/recorder/`.
+- **`importSessionEnv()` runs once, in `src/index.ts`, before anything reads `DISPLAY`.** It scrapes the graphical-session env out of the compositor's `/proc/<pid>/environ`; without it, capture from an agent context dies with `for_each_active_monitor_output_drm failed` — and the *browser* needs it too, not only the recorder. Scope: `src/recorder/session-env.ts`.
+- **Capture the window, never a screen region.** Region capture reads the framebuffer, so it records whatever is stacked above the browser: a test take came out containing the operator's chat client and their private conversations. Raising the window first does not fix it — any window can take the foreground mid-recording. Window capture reads the window's own buffer and is structurally immune. Safety property, not a quality one. Scope: `src/record.ts`.
+- **The overlay animates with `motion/mini`, and every tween settles.** Mini cancels a superseded animation without firing `onfinish`, so its `finished` promise never resolves — and the Node driver awaits `cursorTo` through `page.evaluate`, so one interrupted travel would hang until Playwright's timeout. `springTo` returns its own deferred, resolved on finish, on retarget, or by a watchdog. Never import `motion` (61.8 KB, main-thread rAF) instead of `motion/mini` (11.2 KB); `build-overlay.ts` fails the build over 34 KB. Scope: `overlay/src/anim.ts`.
+- **A selector never reaches the model unverified.** `inventory.ts` publishes a selector only after `querySelectorAll(sel).length === 1` in the live page, so an unaddressable element simply never becomes a target. Also: the crawl navigates with `goto` and **never clicks** — a crawler that clicks will eventually submit a form or delete a row in the operator's dev database. Scope: `src/project/inventory.ts`.
+- **`page.evaluate` needs the `__name` shim under tsx.** esbuild's `keepNames` compiles every named function to `__name(fn, "fn")`; the serialised source carries the reference into the page while the helper stays behind, and it fails with `ReferenceError: __name is not defined` — which reads exactly like "this app has no elements". Scope: `installNameShim` in `src/project/inventory.ts`.
 - **The camera transforms a `position:fixed` stage, never `document.body`.** Measured 2026-07-29: under a transformed `body`, `position:fixed` behaves like `absolute` — a header scrolls to `y=-800` after scrolling 800px, `bottom:0` resolves against body's *content* height, `height:100%` becomes the full document. The stage must be `position:fixed; width:100%; height:100%; overflow:auto`, mounted with `Element.moveBefore` (atomic — preserves iframes, focus, animations), with `scrollbar-gutter:stable` set **before** mounting and `documentElement.overflow:hidden` after. Scope: `overlay/src/stage.ts`.
 - **Never `will-change: transform` on the stage.** It pins the raster scale, so magnified text is blurry *permanently* — not just while moving. Scope: same.
 - **Assert the overlay against a baseline captured at identity, not against any viewport metric.** Measured: `innerWidth` reads 1368 because it includes the scrollbar gutter, and `clientWidth` also reads 1368 while a `width:100%` fixed child measures 1353 — neither describes the box the overlay is entitled to. The requirement was never "the overlay equals N pixels"; it is "the overlay did not change when the camera moved". Scope: `assertOverlayUnscaled` in `overlay/src/stage.ts`.

@@ -1,7 +1,7 @@
 {
   "name": "demovid",
-  "version": "0.1.0",
-  "description": "Gera vídeos de demonstração narrados de qualquer projeto frontend — injeta balões, mouse simulado e foco em elementos via Playwright, narra com OpenAI TTS e grava com o `rec`, em passe único.",
+  "version": "0.2.0",
+  "description": "Rode dentro do seu projeto frontend, descreva a demo em português, e receba um MP4 narrado + uma timeline com os tempos de cada fala e os melhores pontos de corte. O roteiro é escrito por IA a partir dos elementos reais do app.",
   "type": "module",
   "bin": {
     "demovid": "dist/index.js"
@@ -25,6 +25,8 @@
     "node": ">=20"
   },
   "scripts": {
+    "prepare": "npm run bake:springs && npm run build",
+    "prepublishOnly": "npm run typecheck && npm test",
     "build": "npm run build:overlay && tsc -p tsconfig.build.json",
     "build:overlay": "node --import tsx scripts/build-overlay.ts",
     "bake:springs": "node --import tsx scripts/bake-springs.ts",
@@ -36,7 +38,11 @@
     "link": "npm run build && npm link && demovid --help",
     "test:e2e": "node test/stage.e2e.mjs",
     "verify": "npm run typecheck && npm run bake:springs && npm run build && npm test && npm run test:e2e && npm run test:record",
-    "test:record": "node --import tsx test/record.e2e.ts"
+    "test:record": "node --import tsx test/record.e2e.ts",
+    "verify:pack": "npm pack --dry-run"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "demo-video",
@@ -54,7 +60,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     "dotenv": "^17.4.2",
-    "playwright": "^1.61.1",
+    "playwright-core": "^1.62.0",
     "yaml": "^2.8.1",
     "zod": "^4.1.12"
   },

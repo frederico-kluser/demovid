@@ -42,12 +42,28 @@ export interface ClipRef {
 
 export type ClipOutcome = "ended" | "timeout" | "error";
 
+/** Physical constants of a spring, as `overlay/src/anim.ts` rebuilds it. */
+export interface SpringConstants {
+  stiffness: number;
+  damping: number;
+  mass: number;
+}
+
 export interface OverlayApi {
   mount(style?: unknown): MountResult;
   repromote(): void;
   fingerprint(): string;
   getCamera(): Camera;
   setCamera(c: Camera): void;
+  /**
+   * Animate the camera, resolving once it has settled. The driver must NOT
+   * write `stage.style.transition` itself — that left a transition string
+   * parked on the element forever and made the end of every take
+   * non-deterministic.
+   */
+  cameraTo(c: Camera, spring: SpringConstants, hintMs?: number): Promise<void>;
+  /** Live animations on the stage. Must be 0 once a move has settled. */
+  stageAnimationCount(): number;
   assertUnscaled(): { ok: boolean; detail: string };
   cameraFor(selector: string, k: number): Camera | null;
   rectOf(selector: string): Box | null;

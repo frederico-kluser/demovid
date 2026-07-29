@@ -31,6 +31,13 @@ export interface CameraPreset {
   spring: BakedSpring;
   /** Hold after the camera settles, before narration continues. */
   minHoldMs: number;
+  /**
+   * Extra hold after the move resolves, for the compositor to re-rasterise.
+   * Measured: `transform: scale()` does not blur text, but text IS soft while
+   * the layer is promoted mid-move and crisp again once it lands. Defaults to
+   * 180ms when absent.
+   */
+  rasterHoldMs?: number;
 }
 
 export interface CursorPreset {
@@ -41,6 +48,8 @@ export interface CursorPreset {
   spring: BakedSpring;
   /** Ring drawn while travelling — anticipation. `null` for presets that skip it. */
   ring: { toPx: number; strokePx: number; durationMs: number } | null;
+  /** Click contraction. Cap's constants (0.8 over 130ms) when absent. */
+  click?: { shrinkTo: number; ms: number };
 }
 
 export interface SpotlightPreset {

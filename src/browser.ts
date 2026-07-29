@@ -15,13 +15,13 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { resolveBrowser } from "./doctor.js";
 import { run } from "./exec.js";
 import { OVERLAY_BUNDLE } from "./generated/overlay-bundle.js";
 
 export interface LaunchOptions {
-  /** Inner size of the recorded window. */
+  /** Size of the recorded window, in physical pixels. */
   width?: number;
   height?: number;
   /** Where to put the window. Defaults to the primary monitor's origin. */
@@ -29,6 +29,20 @@ export interface LaunchOptions {
   y?: number;
   /** Override the browser binary. Falls back to `DEMOVID_BROWSER`, then autodetect. */
   browser?: string;
+  /**
+   * Pixel density. Cannot be a Playwright context option here — it is rejected
+   * alongside `viewport: null`, which the OS-window capture requires — so it
+   * goes in as a launch flag. See `src/emulate.ts`.
+   */
+  deviceScaleFactor?: number;
+  /**
+   * Skip the X11 window hunt and the overlay injection.
+   *
+   * For the crawl, which drives the page but records nothing: resolving the
+   * window id costs an 8s xdotool poll and the overlay would only get in the
+   * way of measuring the app's own DOM.
+   */
+  probe?: boolean;
 }
 
 export interface LaunchedBrowser {
@@ -108,10 +122,16 @@ export async function launchBrowser(opts: LaunchOptions = {}): Promise<LaunchedB
     );
   }
 
-  const width = opts.width ?? 1600;
-  const height = opts.height ?? 1000;
-  const x = opts.x ?? 0;
-  const y = opts.y ?? 0;
+  // Measured: `--window-size` and `--window-position` are in LOGICAL pixels.
+  // With `--force-device-scale-factor=2`, `--window-size=800,600` produces an
+  // X11 window of 1600x1200. Callers here think in physical pixels, because
+  // that is what the recorder captures and what the output file measures, so
+  // the conversion happens once, here.
+  const dsf = opts.deviceScaleFactor && opts.deviceScaleFactor > 0 ? opts.deviceScaleFactor : 1;
+  const width = Math.round((opts.width ?? 1600) / dsf);
+  const height = Math.round((opts.height ?? 1000) / dsf);
+  const x = Math.round((opts.x ?? 0) / dsf);
+  const y = Math.round((opts.y ?? 0) / dsf);
 
   const profile = await mkdtemp(join(tmpdir(), "demovid-profile-"));
   const before = await braveWindowIds();
@@ -128,10 +148,18 @@ export async function launchBrowser(opts: LaunchOptions = {}): Promise<LaunchedB
       "--disable-dev-shm-usage",
       `--window-size=${width},${height}`,
       `--window-position=${x},${y}`,
+      ...(dsf !== 1 ? [`--force-device-scale-factor=${dsf}`] : []),
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-brave-update",
       "--hide-crash-restore-bubble",
+      // Without these, Chromium draws a yellow infobar reading "You are using an
+      // unsupported command-line flag: --no-sandbox. Stability and security will
+      // suffer." across the top of the page — and straight into the video.
+      // `--test-type` is what suppresses it; `--disable-infobars` covers the rest.
+      "--test-type",
+      "--disable-infobars",
+      "--disable-features=Translate,MediaRouter,InfiniteSessionRestore",
       // Keep the renderer at full speed even if the window loses focus mid-take.
       "--disable-backgrounding-occluded-windows",
       "--disable-renderer-backgrounding",
@@ -141,17 +169,19 @@ export async function launchBrowser(opts: LaunchOptions = {}): Promise<LaunchedB
 
   // On the CONTEXT, not the page: an init script added to a page only applies to
   // that page's later navigations, and `setContent` is not a full navigation.
-  await ctx.addInitScript({ content: OVERLAY_BUNDLE });
+  if (!opts.probe) await ctx.addInitScript({ content: OVERLAY_BUNDLE });
 
   const page = ctx.pages()[0] ?? (await ctx.newPage());
 
-  let windowId: string;
-  try {
-    windowId = await findNewWindow(before);
-  } catch (err) {
-    await ctx.close().catch(() => {});
-    await rm(profile, { recursive: true, force: true });
-    throw err;
+  let windowId = "";
+  if (!opts.probe) {
+    try {
+      windowId = await findNewWindow(before);
+    } catch (err) {
+      await ctx.close().catch(() => {});
+      await rm(profile, { recursive: true, force: true });
+      throw err;
+    }
   }
 
   const close = async (): Promise<void> => {
@@ -160,4 +190,49 @@ export async function launchBrowser(opts: LaunchOptions = {}): Promise<LaunchedB
   };
 
   return { ctx, page, windowId, browserPath, close };
+}
+
+/**
+ * Height of the browser's own UI — tab strip, omnibox, any bookmark bar —
+ * inside the captured window, in PHYSICAL pixels.
+ *
+ * Measured rather than assumed: it varies with the browser, its version, and
+ * whether the user's profile shows a bookmark bar. A hardcoded 88px was the
+ * first version of this and was wrong on the first machine that tried it.
+ */
+export async function chromeHeightPx(page: Page, deviceScaleFactor = 1): Promise<number> {
+  const logical = await page.evaluate(() => window.outerHeight - window.innerHeight);
+  return Math.max(0, Math.round(logical * deviceScaleFactor));
+}
+
+/**
+ * Resize the window so its *content* area is exactly `w x h` physical pixels.
+ *
+ * Used when the browser's own UI is going to be excluded from the capture: the
+ * window has to be that much taller so the region left over is precisely the
+ * requested resolution, and no scaling is needed afterwards.
+ *
+ * `Browser.setWindowBounds` works in logical pixels and covers the whole
+ * window, so the browser UI has to be added back in logical units.
+ */
+export async function setContentSize(
+  page: Page,
+  w: number,
+  h: number,
+  deviceScaleFactor = 1,
+): Promise<void> {
+  const chromeLogical = await page.evaluate(() => window.outerHeight - window.innerHeight);
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    const { windowId } = await cdp.send("Browser.getWindowForTarget");
+    await cdp.send("Browser.setWindowBounds", {
+      windowId,
+      bounds: {
+        width: Math.round(w / deviceScaleFactor),
+        height: Math.round(h / deviceScaleFactor) + chromeLogical,
+      },
+    });
+  } finally {
+    await cdp.detach().catch(() => {});
+  }
 }

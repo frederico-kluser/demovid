@@ -12,6 +12,8 @@
  * a `spawn`ed child directly.
  */
 import { execFile } from "node:child_process";
+import { access, constants } from "node:fs/promises";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -29,14 +31,36 @@ export interface RunOptions {
 }
 
 const INSTALL_HINTS: Record<string, string> = {
-  rec: "Install the user's `rec` CLI: `~/Projects/rec/install.sh` (symlinks into ~/.local/bin).",
-  recstop: "Ships with `rec` — run `~/Projects/rec/install.sh`.",
   "gpu-screen-recorder":
-    "Install gpu-screen-recorder (it is `rec`'s backend). Prefer calling `rec`, which also fixes the session env.",
+    "Install gpu-screen-recorder for GPU capture (e.g. `sudo apt install gpu-screen-recorder`). " +
+    "Without it demovid falls back to ffmpeg, which cannot pause and cannot follow a window that moves.",
   ffmpeg: "Install ffmpeg (e.g. `sudo apt install ffmpeg`).",
   ffprobe: "Install ffmpeg — it provides ffprobe (e.g. `sudo apt install ffmpeg`).",
   xdotool: "Install xdotool (`sudo apt install xdotool`) — needed to resolve the browser window id on X11.",
+  pactl: "Install pulseaudio-utils (`sudo apt install pulseaudio-utils`) — needed to find the audio sink.",
+  xprop: "Install x11-utils (`sudo apt install x11-utils`) — needed to read the desktop work area.",
 };
+
+/**
+ * PATH lookup in pure Node.
+ *
+ * Deliberately NOT `sh -c "command -v"`: that would be a shell, which this
+ * project forbids, and `command` is a shell builtin that cannot be exec'd
+ * directly anyway. Lives here rather than in `doctor.ts` because the recorder
+ * needs it to choose a backend, and `doctor` is a reporting module.
+ */
+export async function which(bin: string): Promise<string | null> {
+  for (const dir of (process.env["PATH"] ?? "").split(":")) {
+    if (!dir) continue;
+    const p = join(dir, bin);
+    const ok = await access(p, constants.X_OK).then(
+      () => true,
+      () => false,
+    );
+    if (ok) return p;
+  }
+  return null;
+}
 
 /** Thrown when the binary is not on PATH. Carries an install hint. */
 export class BinaryNotFoundError extends Error {

@@ -19,15 +19,19 @@ import { Cursor, type CursorStyle } from "./cursor.js";
 import { Sequencer, type ClipRef } from "./sequencer.js";
 import { SPOTLIGHT_KEYFRAMES, Spotlight, type SpotlightStyle } from "./spotlight.js";
 import type { OverlayApi } from "../../src/overlay-api.js";
+import { SPRINGS } from "../../src/generated/springs.js";
 import {
   assertOverlayUnscaled,
   camFor,
+  cameraTo,
   captureOverlayBaseline,
   fingerprint,
   getCamera,
   localRect,
   mountStage,
   setCamera,
+  stageAnimationCount,
+  type Camera,
 } from "./stage.js";
 
 const HOST_ID = "__demovid_overlay";
@@ -43,7 +47,9 @@ const DEFAULT_STYLE: OverlayStyle = {
   cursor: {
     dotPx: 20,
     travelFactor: 1.25,
-    spring: { css: "", durationMs: 650, easing: "cubic-bezier(.4,0,.2,1)", zeta: 0.93, perceivedMs: 343, overshoot: 0 },
+    // The baked Cap "Mellow" constants, so a styleless `mount()` still moves
+    // like the product does rather than like a stand-in.
+    spring: SPRINGS.cursorMellow,
     accent: "#3B82F6",
     ring: { toPx: 60, strokePx: 6, durationMs: 900 },
   },
@@ -173,6 +179,18 @@ const api = {
   fingerprint,
   getCamera,
   setCamera,
+  stageAnimationCount,
+
+  /**
+   * Animate the camera and resolve when it has settled.
+   *
+   * The driver used to write `stage.style.transition` itself and then sleep for
+   * a guessed duration. Owning the animation here means the promise is the
+   * truth, and nothing is left parked on the stage afterwards.
+   */
+  cameraTo(c: Camera, spring: { stiffness: number; damping: number; mass: number }, hintMs?: number): Promise<void> {
+    return cameraTo(c, spring, hintMs);
+  },
 
   assertUnscaled(): { ok: boolean; detail: string } {
     if (!host) return { ok: false, detail: "overlay não montado" };

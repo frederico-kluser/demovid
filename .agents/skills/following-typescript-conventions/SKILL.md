@@ -51,9 +51,16 @@ Two corollaries that have already come up:
 - PATH lookup is done in Node by iterating `process.env.PATH` (`src/doctor.ts:35-47@a394a34`).
   `sh -c "command -v"` is wrong twice over: it is a shell, and `command` is a shell builtin that
   cannot be exec'd directly anyway.
-- The single deliberate bypass is `spawn("rec", …)` at `src/rec.ts:238@a394a34`, because that child
-  must be *signalled* rather than awaited. Any new long-lived, signalled child follows that pattern;
-  everything else goes through `run()`.
+- The deliberate bypasses are the two long-lived children that must be *signalled* rather than
+  awaited: the recorder (`src/recorder/index.ts:302@72303c9`) and the project's dev server
+  (`src/project/devserver.ts`). Any new one follows that pattern; everything else goes through
+  `run()`. The dev server additionally spawns `detached: true` and is killed by **process group** —
+  signalling the `npm` wrapper alone orphans the real server, which then holds the port.
+- **`page.evaluate` is a third bypass, of a different kind.** Under `tsx`, esbuild's `keepNames`
+  compiles every named function to `__name(fn, "fn")`, and `page.evaluate` serialises the *compiled*
+  source — so the helper reference reaches the browser while the helper does not, and the call dies
+  with `ReferenceError: __name is not defined`. `installNameShim` in `src/project/inventory.ts`
+  injects an identity `__name` before any evaluate that passes a named function.
 
 ### Output discipline
 
@@ -65,14 +72,14 @@ corrupts a caller's JSON. `doctor` follows the same rule and returns data rather
 ### Error style
 
 `export class XError extends Error` with `public readonly` context fields, `super(humanMessage)`, then
-`this.name = "XError"` (`src/exec.ts:42@a394a34`, `src/rec.ts:59@a394a34`,
+`this.name = "XError"` (`src/exec.ts:42@a394a34`, `src/recorder/types.ts:78@72303c9`,
 `src/openai/tts.ts:63@a394a34`). Libraries throw; the boundary converts. There is exactly one
 `main().catch` that narrows the domain errors and sets an exit code (`src/index.ts:186-200@a394a34`) —
 do not add a second.
 
 ### Smaller conventions, stated once
 
-- `#private` ECMAScript fields, never the TypeScript `private` modifier (`src/rec.ts:99@a394a34`).
+- `#private` ECMAScript fields, never the TypeScript `private` modifier (`src/recorder/index.ts:98@72303c9`).
 - Every module opens with a block comment explaining **why**, usually carrying the measurement that
   forced the design (`src/openai/tts.ts:6-22@a394a34`). A comment restating what the code does is
   noise; a comment recording what was measured is the reason the code is not rewritten wrongly later.

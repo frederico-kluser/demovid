@@ -9,9 +9,22 @@ live and `audio.onended` drives step advance, there is **no timeline to synchron
 alignment, no word timestamps, no drift.
 
 ```bash
+cd ~/my-app
+npx demovid                # scan → ask what to demo → gpt-5.4 writes it → rehearse → record
+```
+
+It reads your `package.json`, starts (or adopts) your dev server, crawls the app
+for elements it can actually address, asks in Portuguese what you want to show,
+has `gpt-5.4` write the storyboard, rehearses it so broken selectors surface
+before anything is recorded, and only then records. You get `demo.mp4` and
+`demo.timeline.json`.
+
+The hand-written path still works, and the guided flow just writes the same file:
+
+```bash
 demovid doctor                      # does this machine have what it needs?
-demovid rehearse examples/demo.yaml # validate selectors and camera, record nothing
-demovid record   examples/demo.yaml # → demo.mp4
+demovid rehearse demo.yaml          # validate selectors and camera, record nothing
+demovid record   demo.yaml --res reels   # → demo.mp4 + demo.timeline.json
 ```
 
 ```yaml
@@ -35,9 +48,9 @@ steps:
 
 ## Status
 
-Working: `doctor`, `rehearse`, `record`. Presets `boardroom` and `helpdesk`, locale `pt-BR`.
-Not yet written: `script` and `refine` — having an agent draft and revise the storyboard. Write the
-YAML by hand for now; `rehearse` validates it.
+Working: the guided flow, `doctor`, `rehearse`, `record`, `restore`. Presets `boardroom` and
+`helpdesk`, locale `pt-BR`. Resolutions from `720p` to `reels` (9:16 vertical), plus any of
+Playwright's 207 device names.
 
 ## Requirements
 
@@ -45,16 +58,32 @@ YAML by hand for now; `rehearse` validates it.
   untested.
 - **Node ≥ 20**, a **Chromium-family browser** (Brave, Chrome, Chromium — Firefox will not work, no
   CDP), **ffmpeg**, **xdotool**, and an **`OPENAI_API_KEY`**.
-- **A screen recorder.** `demovid` shells out to a CLI called `rec`, which is a thin wrapper over
-  [`gpu-screen-recorder`](https://git.dec05eba.com/gpu-screen-recorder/about/). If you do not have
-  that wrapper, `src/rec.ts` builds exactly this and you can substitute your own:
+- **A screen recorder — optional.** demovid prefers
+  [`gpu-screen-recorder`](https://git.dec05eba.com/gpu-screen-recorder/about/) and drives it
+  directly; there is no wrapper script to install. Without it, it falls back to ffmpeg (`x11grab` +
+  the PulseAudio monitor, with NVENC or VAAPI when available). The fallback cannot pause and cannot
+  follow a window that moves, and it says so rather than pretending otherwise.
 
-  ```bash
-  gpu-screen-recorder -w <window-id> -f 60 -k h264 -ac aac -q very_high \
-                      -cursor yes -a default_output -o out.mp4
-  ```
+Run `demovid doctor` — it names the backend it picked and why.
 
-  Stop with **SIGINT** (SIGKILL truncates the container). Pause is **SIGUSR2**, and it is a *toggle*.
+## What comes out
+
+Two files. The MP4, and a `.timeline.json` that demovid can produce and a screen recorder cannot,
+because demovid *caused* everything in the frame:
+
+```jsonc
+{ "clock": { "method": "first-frame-ts", "residualMs": 17 },
+  "narration": [{ "text": "Aqui em cima ficam os indicadores…",
+                  "startMs": 15341, "endMs": 18805, "measured": true }],
+  "events":    [{ "t": "camera-move", "startMs": 14980, "endMs": 15430 }],
+  "cuts":      [{ "atMs": 33174, "score": 0.75, "kind": "entre-passos",
+                  "reasons": ["silêncio de 4375ms (+0.35)", "câmera parada (+0.25)",
+                              "fronteira de passo (+0.15)"] }] }
+```
+
+`clock.method` says which anchor was trusted and `residualMs` is the honest error bar on every
+timestamp in the file. Cut scores carry their derivation, because a score you cannot explain is a
+score you cannot tune.
 
 Run `demovid doctor` — it checks every one of these and tells you which is missing. Add `--deep` to
 spend one minimal API call proving the OpenAI key has **credit**, not just that it is valid:

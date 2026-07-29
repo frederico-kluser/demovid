@@ -11,7 +11,9 @@ overlay/dist/
 *.mkv
 *.mp3
 *.wav
+*.timeline.json
 .demovid-cache/
+.demovid/
 src/generated/
 
 # local Claude Code settings (bootstrap Stop hook lives here, not committed)
