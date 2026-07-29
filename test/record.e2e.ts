@@ -90,6 +90,21 @@ try {
     assert.ok(recording!.running, `rec morreu ao iniciar:\n${recording!.stderrTail}`);
   });
 
+  // Toca um tom pela Web Audio API. É o teste do caminho de áudio inteiro:
+  // página → sink do PipeWire → monitor → rec. Sem isso a faixa fica muda e a
+  // asserção de conteúdo lá embaixo não prova nada.
+  await browser.page.evaluate(() => {
+    const ac = new AudioContext();
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.frequency.value = 440;
+    gain.gain.value = 0.25;
+    osc.connect(gain).connect(ac.destination);
+    osc.start();
+    // Para junto com a gravação; nada de deixar um oscilador tocando.
+    setTimeout(() => { osc.stop(); void ac.close(); }, 5000);
+  });
+
   // Uma coreografia mínima, para o vídeo ter movimento de verdade.
   await sleep(1200);
   const cam = await browser.page.evaluate(() => window.__demovid!.cameraFor("#alvo", 1.6));
@@ -137,6 +152,20 @@ try {
     assert.match(probe, /codec_type=audio/, "sem faixa de áudio (o som do sistema não entrou)");
     const d = Number(/duration=([\d.]+)/.exec(probe)?.[1] ?? 0);
     assert.ok(d > 4 && d < 20, `duração ${d}s fora do esperado (~7s)`);
+  });
+
+  // Faixa de áudio EXISTIR e ter CONTEÚDO são coisas diferentes. A checagem
+  // acima passaria com silêncio absoluto — que é exatamente como um vídeo mudo
+  // chegaria ao usuário sem ninguém notar.
+  const { stderr: vol } = await run("ffmpeg", [
+    "-hide_banner", "-i", stopped.output, "-af", "volumedetect", "-f", "null", "-",
+  ]).catch((e: unknown) => ({ stderr: String((e as { stderrTail?: string }).stderrTail ?? "") }));
+  const meanDb = Number(/mean_volume:\s*(-?[\d.]+) dB/.exec(vol)?.[1] ?? NaN);
+  console.error(`  · áudio: mean ${meanDb} dB`);
+  check("a faixa de áudio tem sinal, não silêncio", () => {
+    assert.ok(Number.isFinite(meanDb), `não consegui medir o volume: ${vol.slice(0, 160)}`);
+    // Silêncio digital mede −91 dB. Fala normalizada a −14 LUFS fica bem acima.
+    assert.ok(meanDb > -50, `mean_volume ${meanDb} dB — a faixa está praticamente muda`);
   });
 } finally {
   // dispose() incondicional — nunca `if (recording.running)`. Foi exatamente

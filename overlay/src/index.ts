@@ -7,13 +7,18 @@
  *  - **Top layer** (`popover=manual`) isolates from the stage's `transform`.
  *    Guaranteed by CSS Position L4 §3: top-layer elements "generate boxes as if
  *    they were siblings of the root element… Ancestor elements with overflow,
- *    opacity, mask, etc. cannot affect it." Measured: with the stage at 1.5×,
- *    the overlay stayed 1353px wide while the stage content was at 2007px.
+ *    opacity, mask, etc. cannot affect it." Measured: with the stage at 1.6×,
+ *    the overlay stayed exactly at its baseline size.
  *  - **Shadow root** isolates from the app's CSS, both directions.
  *
  * `popover`, never `dialog.showModal()` — `showModal` makes the rest of the
  * document inert, which would make the app unclickable.
  */
+import { Balloon, type BalloonStyle, type Box } from "./balloon.js";
+import { Cursor, type CursorStyle } from "./cursor.js";
+import { Sequencer, type ClipRef } from "./sequencer.js";
+import { SPOTLIGHT_KEYFRAMES, Spotlight, type SpotlightStyle } from "./spotlight.js";
+import type { OverlayApi } from "../../src/overlay-api.js";
 import {
   assertOverlayUnscaled,
   camFor,
@@ -23,19 +28,60 @@ import {
   localRect,
   mountStage,
   setCamera,
-  type Camera,
 } from "./stage.js";
 
 const HOST_ID = "__demovid_overlay";
 
+export interface OverlayStyle {
+  cursor: CursorStyle;
+  spotlight: SpotlightStyle;
+  balloon: BalloonStyle;
+}
+
+/** Fallback so `mount()` with no arguments still produces something usable. */
+const DEFAULT_STYLE: OverlayStyle = {
+  cursor: {
+    dotPx: 20,
+    travelFactor: 1.25,
+    spring: { css: "", durationMs: 650, easing: "cubic-bezier(.4,0,.2,1)", zeta: 0.93, perceivedMs: 343, overshoot: 0 },
+    accent: "#3B82F6",
+    ring: { toPx: 60, strokePx: 6, durationMs: 900 },
+  },
+  spotlight: {
+    dim: 0.55,
+    cutoutRadiusPx: 8,
+    paddingPx: 12,
+    ringPx: 2,
+    accent: "#3B82F6",
+    pulse: { toScale: 1.06, periodMs: 1200, cycles: 3 },
+  },
+  balloon: {
+    maxWidthPx: 380,
+    fontSizePx: 17,
+    lineHeight: 1.5,
+    fontWeight: 450,
+    radiusPx: 12,
+    paddingPx: [16, 20],
+    bg: "rgba(15,23,42,.97)",
+    fg: "#F1F5F9",
+    accent: "#3B82F6",
+    shadow: "0 1px 1px rgba(0,0,0,.10), 0 2px 3px rgba(0,0,0,.08), 1px 4px 8px rgba(0,0,0,.12)",
+    placement: "anchored",
+  },
+};
+
 let host: HTMLElement | null = null;
 let root: ShadowRoot | null = null;
+let cursor: Cursor | null = null;
+let spotlight: Spotlight | null = null;
+let balloon: Balloon | null = null;
+const sequencer = new Sequencer();
 
 /**
  * Mount the overlay host. Appended to `documentElement` (not `body`) so it is a
  * sibling of the stage even before the popover promotes it — belt and braces.
  */
-function mountOverlay(): HTMLElement {
+function mountOverlay(style: OverlayStyle): HTMLElement {
   const existing = document.getElementById(HOST_ID);
   if (existing) return (host = existing);
 
@@ -43,15 +89,23 @@ function mountOverlay(): HTMLElement {
   el.id = HOST_ID;
   el.setAttribute("popover", "manual"); // manual: no light-dismiss, no Esc
   // Each declaration cancels one from Chromium's UA sheet for [popover], which
-  // otherwise gives us `width:fit-content; margin:auto; border:solid; padding:.25em;
-  // overflow:auto; background-color:Canvas`.
+  // otherwise gives us `width:fit-content; margin:auto; border:solid;
+  // padding:.25em; overflow:auto; background-color:Canvas`.
   el.style.cssText =
     "position:fixed; inset:0; width:100%; height:100%;" +
     "margin:0; border:0; padding:0; overflow:visible;" +
     "background:transparent; color:inherit; pointer-events:none;";
 
   document.documentElement.appendChild(el);
-  root = el.attachShadow({ mode: "open" }); // open: closed blocks our own tooling
+  const shadow = el.attachShadow({ mode: "open" }); // open: closed blocks our own tooling
+
+  const sheet = document.createElement("style");
+  sheet.textContent =
+    ":host { all: initial }\n" +
+    "* { box-sizing: border-box }\n" +
+    SPOTLIGHT_KEYFRAMES(style.spotlight.pulse?.toScale ?? 1.06);
+  shadow.append(sheet);
+
   el.showPopover();
 
   // Top-layer order is by activation, with no z-index control. If the app opens
@@ -63,6 +117,11 @@ function mountOverlay(): HTMLElement {
     },
     true,
   );
+
+  root = shadow;
+  spotlight = new Spotlight(shadow, style.spotlight);
+  balloon = new Balloon(shadow, style.balloon);
+  cursor = new Cursor(shadow, style.cursor);
 
   host = el;
   return el;
@@ -78,6 +137,15 @@ function repromote(): void {
   }
 }
 
+/** Viewport-space rect of a selector. Already camera-transformed by the browser. */
+function rectOf(selector: string): Box | null {
+  const el = document.querySelector(selector);
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  if (r.width === 0 && r.height === 0) return null;
+  return { x: r.x, y: r.y, w: r.width, h: r.height };
+}
+
 /** Everything the driver calls, exposed on one global. */
 const api = {
   /**
@@ -87,10 +155,10 @@ const api = {
    * because a caller had been told the stage existed when it did not. A mount
    * that cannot fail visibly is a mount you debug from the wrong end.
    */
-  mount(): { stage: boolean; overlay: boolean; adopted: number; why?: string } {
+  mount(style?: OverlayStyle): { stage: boolean; overlay: boolean; adopted: number; why?: string } {
     if (!document.body) return { stage: false, overlay: false, adopted: 0, why: "document.body ainda não existe" };
     const st = mountStage();
-    const el = mountOverlay();
+    const el = mountOverlay(style ?? DEFAULT_STYLE);
     // Camera is at identity right now — this is the only correct moment to
     // record what "unscaled" looks like.
     captureOverlayBaseline(el);
@@ -100,30 +168,87 @@ const api = {
       adopted: st.childElementCount,
     };
   },
+
   repromote,
   fingerprint,
   getCamera,
   setCamera,
+
   assertUnscaled(): { ok: boolean; detail: string } {
     if (!host) return { ok: false, detail: "overlay não montado" };
     return assertOverlayUnscaled(host);
   },
+
   /** Camera state that centres `selector` at zoom `k`. Does not apply it. */
-  cameraFor(selector: string, k: number): Camera | null {
+  cameraFor(selector: string, k: number): { tx: number; ty: number; k: number } | null {
     const el = document.querySelector(selector);
     if (!el) return null;
     return camFor(localRect(el), k, window.innerWidth, window.innerHeight);
   },
+
+  rectOf,
+
+  // ── overlay ──────────────────────────────────────────────────────────────
+  spotlightOn(selector: string): boolean {
+    const r = rectOf(selector);
+    if (!r || !spotlight) return false;
+    spotlight.moveTo(r);
+    return true;
+  },
+  spotlightOff(): void {
+    spotlight?.hide();
+  },
+
+  say(text: string, selector?: string): void {
+    balloon?.show(text, selector ? rectOf(selector) : null);
+  },
+  hush(): void {
+    balloon?.hide();
+  },
+
+  showCursor(): void {
+    cursor?.show();
+  },
+  hideCursor(): void {
+    cursor?.hide();
+  },
+  cursorTo(x: number, y: number, targetW?: number): Promise<void> {
+    return cursor?.moveTo(x, y, targetW) ?? Promise.resolve();
+  },
+  cursorPlace(x: number, y: number): void {
+    cursor?.placeAt(x, y);
+  },
+  cursorClick(): Promise<void> {
+    return cursor?.click() ?? Promise.resolve();
+  },
+  cursorZoom(k: number): void {
+    cursor?.setStageZoom(k);
+  },
+
+  // ── narração ─────────────────────────────────────────────────────────────
+  preloadClip(clip: ClipRef): Promise<void> {
+    return sequencer.preload(clip);
+  },
+  playClip(clip: ClipRef, index: number): Promise<"ended" | "timeout" | "error"> {
+    return sequencer.play(clip, index);
+  },
+  releaseClip(src: string): void {
+    sequencer.release(src);
+  },
+  sequencerEvents(): readonly unknown[] {
+    return sequencer.events;
+  },
+
   get shadow(): ShadowRoot | null {
     return root;
   },
 };
 
-declare global {
-  interface Window {
-    __demovid?: typeof api;
-  }
-}
+// `satisfies` e não `:` — o objeto guarda os tipos concretos de retorno para
+// quem usa aqui dentro, mas qualquer método que suma ou mude de assinatura
+// quebra o build em vez de falhar dentro do browser, onde o stack trace é inútil.
+const _contract = api satisfies OverlayApi;
+void _contract;
 
 window.__demovid = api;
 

@@ -1,0 +1,30 @@
+title: Painel de Exames
+url: file:///home/ondokai/Projects/demovid/examples/app.html
+locale: pt-BR
+preset: boardroom
+
+steps:
+  - action: wait
+    value: "600"
+    say: >-
+      Este é o painel de exames. Ele reúne as requisições em aberto,
+      os laudos liberados e o histórico de cada paciente.
+
+  - action: focus
+    target: "#kpi-pendentes"
+    say: >-
+      Aqui em cima ficam os indicadores do dia. Vinte e quatro requisições
+      aguardando coleta.
+
+  - action: hover
+    target: "#kpi-liberados"
+    say: E doze laudos já liberados nas últimas vinte e quatro horas.
+
+  - action: type
+    target: "#busca"
+    value: "REQ-88413"
+    say: A busca aceita o protocolo ou o nome do paciente.
+
+  - action: click
+    target: "#novo"
+    say: E uma nova requisição começa por aqui.

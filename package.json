@@ -34,7 +34,7 @@
     "test": "node --import tsx --test test/*.test.ts",
     "link": "npm run build && npm link && demovid --help",
     "test:e2e": "node test/stage.e2e.mjs",
-    "verify": "npm run typecheck && npm run build && npm run test:e2e && npm run test:record",
+    "verify": "npm run typecheck && npm run bake:springs && npm run build && npm test && npm run test:e2e && npm run test:record",
     "test:record": "node --import tsx test/record.e2e.ts"
   },
   "keywords": [

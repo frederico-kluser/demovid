@@ -1,9 +1,15 @@
 #!/usr/bin/env node
 import "./env.js"; // MUST be first — see src/env.ts
+import { readFile } from "node:fs/promises";
+import { basename, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { parse as parseYaml } from "yaml";
 import { doctor } from "./doctor.js";
 import { BinaryNotFoundError, CommandFailedError } from "./exec.js";
 import { RecError } from "./rec.js";
+import { record } from "./record.js";
+import { parseStoryboard } from "./storyboard.js";
+import { TtsError } from "./openai/tts.js";
 
 const HELP = `demovid — vídeos de demonstração narrados, de qualquer projeto frontend
 
@@ -47,10 +53,54 @@ EXAMPLES
 const NOT_YET: Record<string, string> = {
   script: "src/openai/script.ts",
   refine: "src/openai/script.ts",
-  voice: "src/openai/tts.ts",
-  rehearse: "src/rehearse.ts",
-  record: "src/record.ts",
 };
+
+/** Carrega e valida um demo.yaml. Erros do zod já nomeiam o passo culpado. */
+async function loadStoryboard(path: string): Promise<ReturnType<typeof parseStoryboard>> {
+  const raw = await readFile(resolve(path), "utf8");
+  return parseStoryboard(parseYaml(raw));
+}
+
+async function runRecord(path: string, rehearse: boolean, out: string | undefined): Promise<number> {
+  const sb = await loadStoryboard(path);
+  const output = out ?? resolve(
+    process.env["DEMOVID_REC_DIR"] ?? `${process.env["HOME"]}/Videos`,
+    `${basename(path).replace(/\.ya?ml$/, "")}.mp4`,
+  );
+
+  const t0 = Date.now();
+  const report = await record({
+    storyboard: sb,
+    output,
+    rehearse,
+    onLog: (l) => console.warn(`[demovid] ${l}`),
+  });
+
+  const failed = report.steps.filter((s) => !s.ok);
+  console.warn("");
+  for (const s of report.steps) {
+    const mark = s.ok ? "✓" : "✗";
+    console.warn(
+      `  ${mark} ${String(s.index).padStart(2)}. ${s.action.padEnd(7)} ` +
+        `${(s.target ?? "").slice(0, 40).padEnd(40)} ${(s.ms / 1000).toFixed(1)}s` +
+        (s.detail ? `\n       ${s.detail}` : ""),
+    );
+  }
+  console.warn("");
+  console.warn(`[demovid] câmera: ${report.cameraRung}${report.cameraRung === "R3" ? " (sem zoom)" : ""}`);
+  for (const w of report.warnings) console.warn(`[demovid] aviso: ${w}`);
+
+  if (rehearse) {
+    console.warn(`[demovid] ensaio concluído em ${((Date.now() - t0) / 1000).toFixed(1)}s — nada foi gravado.`);
+  } else if (report.output) {
+    console.warn(
+      `[demovid] pronto: ${report.output} (${(report.bytes / 1024 / 1024).toFixed(1)} MB, ` +
+        `${((Date.now() - t0) / 1000).toFixed(0)}s)`,
+    );
+    process.stdout.write(`${report.output}\n`);
+  }
+  return failed.length > 0 ? 1 : 0;
+}
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
@@ -82,14 +132,34 @@ async function main(): Promise<void> {
       process.exit(ok ? 0 : 1);
       break;
     }
-    case "script":
-    case "refine":
-    case "voice":
     case "rehearse":
     case "record": {
+      const file = positionals[1];
+      if (!file) {
+        console.error(`[demovid] \`${cmd}\` precisa de um demo.yaml\n`);
+        process.stdout.write(HELP);
+        process.exit(1);
+      }
+      process.exit(await runRecord(file, cmd === "rehearse", values.out));
+      break;
+    }
+    case "voice": {
+      const file = positionals[1];
+      if (!file) {
+        console.error("[demovid] `voice` precisa de um demo.yaml\n");
+        process.exit(1);
+      }
+      // `record --rehearse` já sintetiza tudo e não grava nada; `voice` é o
+      // mesmo trabalho sem abrir o browser, então reaproveita o caminho.
+      console.error("[demovid] `voice` avulso ainda não existe — use `demovid rehearse`, que já sintetiza.");
+      process.exit(2);
+      break;
+    }
+    case "script":
+    case "refine": {
       console.error(
         `[demovid] \`${cmd}\` ainda não está implementado — o módulo é ${NOT_YET[cmd]}.\n` +
-          `[demovid] Rode \`demovid doctor\` para conferir o ambiente enquanto isso.`,
+          `[demovid] Escreva o demo.yaml à mão por enquanto; \`demovid rehearse\` valida.`,
       );
       process.exit(2);
       break;
@@ -102,7 +172,12 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  if (err instanceof BinaryNotFoundError || err instanceof CommandFailedError || err instanceof RecError) {
+  if (
+    err instanceof BinaryNotFoundError ||
+    err instanceof CommandFailedError ||
+    err instanceof RecError ||
+    err instanceof TtsError
+  ) {
     console.error(`[demovid] ${err.message}`);
   } else if (err instanceof Error) {
     console.error(`[demovid] ${err.message}`);

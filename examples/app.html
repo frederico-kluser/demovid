@@ -1,0 +1,50 @@
+<!doctype html><meta charset=utf-8><title>Painel de Exames — demovid</title>
+<style>
+ *{box-sizing:border-box} body{margin:0;font:15px/1.5 Inter,system-ui,sans-serif;color:#0f172a;background:#f8fafc}
+ header{position:fixed;top:0;left:0;right:0;height:60px;background:#0F172A;color:#F1F5F9;display:flex;
+        align-items:center;gap:26px;padding:0 26px;z-index:5}
+ header b{font-size:16px} nav{display:flex;gap:18px;font-size:14px;opacity:.85}
+ nav span{cursor:pointer;padding:4px 2px;border-bottom:2px solid transparent}
+ nav span.on{border-color:#3B82F6;opacity:1}
+ main{padding:88px 26px 40px;max-width:1100px}
+ h1{font-size:22px;margin:0 0 4px} .sub{color:#64748b;font-size:14px;margin:0 0 22px}
+ .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:26px}
+ .card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px}
+ .card h3{margin:0 0 4px;font-size:13px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+ .card .n{font-size:28px;font-weight:650}
+ .bar{display:flex;gap:10px;align-items:center;margin-bottom:14px}
+ input{flex:1;padding:9px 12px;border:1px solid #cbd5e1;border-radius:8px;font:inherit}
+ button{padding:9px 16px;border:0;border-radius:8px;background:#3B82F6;color:#fff;font:inherit;font-weight:550;cursor:pointer}
+ table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden}
+ th,td{padding:11px 14px;text-align:left;border-bottom:1px solid #f1f5f9;font-size:14px}
+ th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#64748b;background:#f8fafc}
+ tr:last-child td{border-bottom:0}
+ .tag{font-size:12px;padding:2px 8px;border-radius:999px;background:#fef3c7;color:#92400e}
+ .tag.ok{background:#dcfce7;color:#166534}
+</style>
+<header><b>Painel de Exames</b><nav>
+  <span class=on>Requisições</span><span id=nav-result>Resultados</span><span>Histórico</span><span id=nav-cfg>Configurações</span>
+</nav></header>
+<main>
+  <h1>Requisições em aberto</h1><p class=sub>Atualizado há 3 minutos</p>
+  <div class=cards>
+    <div class=card id=kpi-pendentes><h3>Pendentes</h3><div class=n>24</div></div>
+    <div class=card id=kpi-liberados><h3>Liberados hoje</h3><div class=n>12</div></div>
+    <div class=card id=kpi-reproc><h3>Reprocessar</h3><div class=n>2</div></div>
+  </div>
+  <div class=bar>
+    <input id=busca placeholder="Buscar por paciente ou protocolo…">
+    <button id=novo>Nova requisição</button>
+  </div>
+  <table>
+    <tr><th>Protocolo</th><th>Paciente</th><th>Exame</th><th>Status</th></tr>
+    <tr><td>REQ-88412</td><td>M. Andrade</td><td>Hemograma completo</td><td><span class=tag>Aguardando coleta</span></td></tr>
+    <tr><td>REQ-88413</td><td>J. Nascimento</td><td>Glicemia de jejum</td><td><span class=tag>Em análise</span></td></tr>
+    <tr><td>REQ-88414</td><td>C. Figueiredo</td><td>Perfil lipídico</td><td><span class="tag ok">Liberado</span></td></tr>
+  </table>
+</main>
+<script>
+ document.getElementById('novo').onclick = () => { document.getElementById('novo').textContent = 'Criando…'; };
+ document.getElementById('nav-cfg').onclick = e => {
+   document.querySelectorAll('nav span').forEach(s=>s.classList.remove('on')); e.target.classList.add('on'); };
+</script>
