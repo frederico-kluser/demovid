@@ -11,8 +11,8 @@
     {
       "id": 2,
       "name": "skill-map",
-      "done": false,
-      "gate_passed": false,
+      "done": true,
+      "gate_passed": true,
       "artifact": ".agents/bootstrap/skill-map.md"
     },
     {
@@ -38,5 +38,5 @@
     }
   ],
   "stop_blocks": 0,
-  "updated_by": "phase-1-gate"
+  "updated_by": "phase-2-gate"
 }
