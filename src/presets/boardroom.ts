@@ -41,6 +41,10 @@ export const boardroom: Preset = {
     // Sombra em três camadas — é o que a Navattic entrega em produção.
     shadow: "0 1px 1px rgba(0,0,0,.10), 0 2px 3px rgba(0,0,0,.08), 1px 4px 8px rgba(0,0,0,.12)",
     placement: "anchored",
+    // Os valores que este preset já tinha na prática, agora explícitos: 1px era
+    // o blur cravado no overlay, e a esquiva do cursor não existia.
+    backdropBlurPx: 1,
+    avoidCursor: false,
   },
 
   pacing: { cps: 14, gapMs: 700, dwellMinMs: 1500, dwellPerWordMs: 400, dwellCapMs: 9000 },

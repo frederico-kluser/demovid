@@ -30,6 +30,10 @@ export interface BalloonStyle {
   accent: string;
   shadow: string;
   placement: "anchored" | "docked-bottom-left" | "lower-third";
+  /** `backdrop-filter: blur()`, in px. Load-bearing when `bg` carries alpha. */
+  backdropBlurPx?: number;
+  /** Also keep clear of the synthetic cursor, not just of the target. */
+  avoidCursor?: boolean;
 }
 
 export interface Box {
@@ -65,7 +69,7 @@ export class Balloon {
       `border-radius:${style.radiusPx}px; background:${style.bg}; color:${style.fg};` +
       `font:${style.fontWeight} ${style.fontSizePx}px/${style.lineHeight} ` +
       `Inter, -apple-system, "Segoe UI", system-ui, sans-serif;` +
-      `box-shadow:${style.shadow}; backdrop-filter:blur(1px);` +
+      `box-shadow:${style.shadow}; backdrop-filter:blur(${style.backdropBlurPx ?? 1}px);` +
       `opacity:0; transform:translate3d(0,0,0); pointer-events:none;` +
       // Navattic ships exactly this entrance for everything: fade + 20px rise,
       // 200ms. Arcade removed its scale-in. Exits are shorter than entrances.
@@ -81,21 +85,32 @@ export class Balloon {
   }
 
   /**
-   * Show `text` pointing at `anchor`.
+   * Show `text` pointing at `anchor`, optionally keeping clear of `cursor` too.
    *
    * Placement order tries vertical first for wide targets and horizontal for
    * tall ones — a balloon under a full-width toolbar is fine; a balloon under a
    * tall sidebar is nonsense.
+   *
+   * `cursor` is honoured only when the style asks for it (`avoidCursor`). In a
+   * narrated video a balloon briefly over the cursor costs nothing, because the
+   * voice carries the step; in a silent GIF the balloon is the only channel and
+   * the cursor is the only pointer, so an overlap hides half the message.
    */
-  show(text: string, anchor: Box | null): void {
+  show(text: string, anchor: Box | null, cursor?: Box | null): void {
     this.#el.textContent = text;
 
+    // Boxes the balloon must not cover. The anchor is unconditional — covering
+    // the element being described is the one placement that defeats the point.
+    const avoid: Box[] = [];
+    if (anchor) avoid.push(anchor);
+    if (this.#style.avoidCursor && cursor) avoid.push(cursor);
+
     if (this.#style.placement === "lower-third" || !anchor) {
-      this.#dock("lower-third");
+      this.#dock("lower-third", avoid);
       return;
     }
     if (this.#style.placement === "docked-bottom-left") {
-      this.#dock("docked-bottom-left");
+      this.#dock("docked-bottom-left", avoid);
       return;
     }
 
@@ -116,9 +131,7 @@ export class Balloon {
     let chosen: { side: Side; x: number; y: number } | null = null;
     for (const side of order) {
       const p = place(side, anchor, bw, bh);
-      // Never cover the element being described — that is the one placement that
-      // defeats the whole point.
-      if (overlaps(p, bw, bh, anchor)) continue;
+      if (avoid.some((box) => overlaps(p, bw, bh, box))) continue;
       if (p.x >= MARGIN && p.y >= MARGIN && p.x + bw <= W - MARGIN && p.y + bh <= H - MARGIN) {
         chosen = { side, ...p };
         break;
@@ -126,10 +139,12 @@ export class Balloon {
     }
 
     if (!chosen) {
-      // Every side either collides with the anchor or leaves the viewport. That
-      // happens with very large targets (a full-width table). Docking with no
-      // tail degrades gracefully — it is what Arcade and Storylane do too.
-      this.#dock("docked-bottom-left");
+      // Every side either collides with something it must not cover or leaves
+      // the viewport. That happens with very large targets (a full-width table)
+      // and, with `avoidCursor`, when the cursor sits on the only free side.
+      // Docking with no tail degrades gracefully — it is what Arcade and
+      // Storylane do too.
+      this.#dock("docked-bottom-left", avoid);
       return;
     }
 
@@ -173,7 +188,19 @@ export class Balloon {
     );
   }
 
-  #dock(where: "docked-bottom-left" | "lower-third"): void {
+  /**
+   * Park the balloon with no tail.
+   *
+   * `docked-bottom-left` is a *preference*, not an address: when `avoid` says
+   * that corner is taken, the remaining corners are tried in a fixed order. With
+   * an empty `avoid` — every preset that does not ask for cursor avoidance — the
+   * first candidate always wins, so this is byte-identical to the old behaviour.
+   *
+   * Falling back to the first candidate when all four collide is deliberate: a
+   * balloon that overlaps something is bad, and a balloon that is not drawn at
+   * all is worse, because then the step has no message.
+   */
+  #dock(where: "docked-bottom-left" | "lower-third", avoid: readonly Box[] = []): void {
     const W = document.documentElement.clientWidth;
     const H = document.documentElement.clientHeight;
     this.#el.style.visibility = "visible";
@@ -181,9 +208,21 @@ export class Balloon {
     const bw = this.#el.offsetWidth;
     const bh = this.#el.offsetHeight;
 
-    const x = where === "lower-third" ? Math.round((W - bw) / 2) : MARGIN * 2;
-    const y = where === "lower-third" ? Math.round(H * 0.72) : H - bh - MARGIN * 2;
-    this.#moveTo(x, y, () => {});
+    if (where === "lower-third") {
+      this.#moveTo(Math.round((W - bw) / 2), Math.round(H * 0.72), () => {});
+      return;
+    }
+
+    const pad = MARGIN * 2;
+    const candidates = [
+      { x: pad, y: H - bh - pad },
+      { x: pad, y: pad },
+      { x: W - bw - pad, y: H - bh - pad },
+      { x: W - bw - pad, y: pad },
+    ];
+    const free =
+      candidates.find((c) => !avoid.some((box) => overlaps(c, bw, bh, box))) ?? candidates[0]!;
+    this.#moveTo(free.x, free.y, () => {});
   }
 
   /**

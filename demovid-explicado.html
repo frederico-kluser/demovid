@@ -53,15 +53,16 @@
   <header class="mb-4">
     <h1 class="display-6 fw-semibold">demovid: o projeto, como usar e como pedir mudanças nele</h1>
     <p class="lead text-body-secondary">
-      Ao final você sabe rodar uma gravação de ponta a ponta, escrever ou corrigir um roteiro à mão,
-      entender por que a arquitetura é do jeito que é — e por que toda tarefa neste repositório
-      começa pelo <code>project-router</code>.
+      Ao final você sabe rodar uma gravação de ponta a ponta — em MP4 narrado ou em GIF mudo para
+      README —, escrever ou corrigir um roteiro à mão, entender por que a arquitetura é do jeito que
+      é, e por que toda tarefa neste repositório começa pelo <code>project-router</code>.
     </p>
     <div class="d-flex flex-wrap gap-2">
       <span class="badge text-bg-secondary">TypeScript</span>
       <span class="badge text-bg-secondary">Node ≥ 20</span>
       <span class="badge text-bg-secondary">Linux/X11</span>
       <span class="badge text-bg-secondary">Playwright + OpenAI</span>
+      <span class="badge text-bg-secondary">MP4 · GIF · WebP</span>
       <span class="badge text-bg-secondary">11 skills</span>
     </div>
   </header>
@@ -163,6 +164,31 @@ npx demovid    # varre → pergunta → IA escreve → ensaia → você aprova �
         <strong>uma nota que você não sabe explicar é uma nota que você não sabe ajustar</strong>.
       </p>
 
+      <h3 class="h5 mt-4">Dois produtos, não um com o som desligado</h3>
+      <p>
+        Existe uma segunda saída: <code>--format gif</code> (ou <code>webp</code>) entrega
+        <strong>só a imagem animada</strong>, otimizada para subir num README. E ela não é o MP4 no mudo
+        — é outro produto, com outro texto, outro ritmo e outro preset.
+      </p>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th></th><th>MP4 narrado</th><th>GIF / WebP mudo</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Quem comunica</strong></td><td>A voz, com o balão apoiando</td><td>O balão, sozinho</td></tr>
+            <tr><td><strong>Campo do roteiro</strong></td><td><code>say</code> (falado)</td><td><code>caption</code> (escrito)</td></tr>
+            <tr><td><strong>O que avança o passo</strong></td><td><code>audio.onended</code></td><td>O tempo de leitura (<code>cps</code> + pisos de dwell)</td></tr>
+            <tr><td><strong>Preset</strong></td><td><code>boardroom</code> / <code>helpdesk</code></td><td><code>readme</code></td></tr>
+            <tr><td><strong>Custo de API</strong></td><td>Uma chamada de TTS por frase</td><td><strong>Zero</strong> — nem chave é preciso</td></tr>
+            <tr><td><strong>Tamanho</strong></td><td>O que a duração pedir</td><td>Teto duro de 5 MB</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="text-body-secondary small mb-0">
+        Medido num clipe de 4s a 720p: <strong>GIF 1,08 MB · WebP 0,10 MB</strong>. O GitHub renderiza
+        os dois em README, issue e PR — o GIF só ganha onde ainda importa compatibilidade velha (npm,
+        PyPI, wikis antigas).
+      </p>
+
       <h3 class="h5 mt-4">Do que ele é feito</h3>
       <div class="table-responsive">
         <table class="table table-sm align-middle">
@@ -254,6 +280,9 @@ demovid record   demo.yaml --res reels    # → demo.mp4 + demo.timeline.json</c
             <tr><td><code>--res &lt;formato&gt;</code></td><td>Preset (<code>720p 1080p 1440p desktop square reels mobile tablet</code>), um <code>WxH</code> como <code>1920x1080</code>, ou um device do Playwright (<code>"iPhone 15"</code>). O que não couber na tela é capturado no maior tamanho possível e ampliado no fim</td></tr>
             <tr><td><code>--monitor &lt;nome&gt;</code></td><td>Em qual saída gravar (padrão: a primária)</td></tr>
             <tr><td><code>--chrome &lt;modo&gt;</code></td><td><code>auto</code> · <code>crop</code> · <code>keep</code>. <code>auto</code>/<code>crop</code> tiram a barra do browser — e qualquer aviso que ele resolva mostrar ali — ao custo de um passe de ffmpeg</td></tr>
+            <tr><td><code>--format &lt;fmt&gt;</code></td><td><code>mp4</code> (padrão) · <code>gif</code> · <code>webp</code>. Os dois últimos entregam <strong>só</strong> a imagem animada, sem voz. Ver <a href="#saida-gif" class="link-underline-opacity-50">a seção abaixo</a></td></tr>
+            <tr><td><code>--max-mb &lt;n&gt;</code></td><td>Teto do gif/webp em MB (padrão: 5). Estourou, o demovid tira quadros até caber</td></tr>
+            <tr><td><code>--fps &lt;n&gt;</code></td><td>Quadros por segundo do gif/webp (padrão: 15). Só desce a partir daí — pedir 10 não gasta um encode a 15 antes</td></tr>
             <tr><td><code>--preset &lt;nome&gt;</code></td><td>Sobrescreve o preset do YAML. Sem a flag, vale o que está no arquivo</td></tr>
             <tr><td><code>--locale &lt;tag&gt;</code></td><td><code>pt-BR</code> | <code>en-US</code> (padrão: <code>pt-BR</code>)</td></tr>
             <tr><td><code>--browser &lt;path&gt;</code></td><td>Executável do browser (padrão: detecta o Brave)</td></tr>
@@ -267,12 +296,63 @@ demovid record   demo.yaml --res reels    # → demo.mp4 + demo.timeline.json</c
         </table>
       </div>
 
+      <h2 class="h4 mt-5" id="saida-gif">Saída em GIF, sem voz</h2>
+      <p>
+        O caso de uso é o README: um GIF que carrega rápido, roda em loop e explica sozinho.
+        Como não há narração, <strong>nenhuma chamada de TTS é feita</strong> — não é o áudio silenciado,
+        é o áudio nunca pedido.
+      </p>
+
+<pre><code class="language-bash">demovid record demo.yaml --format gif              # → demo.gif, ≤ 5 MB
+demovid record demo.yaml --format webp --max-mb 2  # ~10x menor no mesmo clipe
+
+cd ~/meu-app &amp;&amp; demovid --format gif               # fluxo guiado: a IA já escreve para GIF</code></pre>
+
+      <div class="alert alert-success d-flex gap-2" role="alert">
+        <i class="bi bi-key flex-shrink-0"></i>
+        <div><strong>Gravar um GIF de um roteiro escrito à mão não precisa de <code>OPENAI_API_KEY</code>.</strong>
+          A síntese é pulada, não silenciada. A chave continua necessária para <em>escrever</em> um roteiro
+          com IA — só não para transformá-lo em imagem.</div>
+      </div>
+
+      <h3 class="h5 mt-4">O que muda, item por item</h3>
+      <ul>
+        <li><strong>O balão é o único canal.</strong> Ele lê o campo <code>caption</code> do passo e cai no
+          <code>say</code> quando não houver — um <code>demo.yaml</code> escrito para vídeo continua
+          gerando um GIF legível, só mais comprido do que precisava.</li>
+        <li><strong>O preset <code>readme</code> entra sozinho</strong> (a menos que você passe
+          <code>--preset</code>), e ele é logado quando isso acontece: balão de 21px, leve transparência
+          com blur atrás, e o balão passa a desviar <em>também</em> do cursor.</li>
+        <li><strong>O ritmo vem da leitura.</strong> Sem <code>onended</code> para esperar, o
+          <code>dwellFor</code> cai nos pisos de texto que ele já tinha — <code>cps</code> e
+          <code>dwellPerWordMs</code>. Nenhum caminho de ritmo novo foi inventado.</li>
+        <li><strong>Nenhum áudio é capturado.</strong> É privacidade, não economia: a fonte capturada é o
+          monitor do sink padrão, então um take "mudo" que ainda gravasse áudio do sistema levaria para
+          o arquivo o que a máquina estivesse tocando.</li>
+      </ul>
+
+      <h3 class="h5 mt-4">Como os 5 MB são garantidos</h3>
+      <p>
+        Tirando quadros — e não reduzindo a largura, que borraria justamente o texto que o balão está
+        apontando. O GIF tem 256 cores e nenhuma compressão entre quadros, então o que custa caro é
+        <em>movimento</em>: quadro parado é quase grátis.
+      </p>
+
+<pre><code class="language-text">15 fps → 12 → 10 → 8 → 6 → 5     encoda, mede, desce um degrau se não caiu</code></pre>
+
+      <p class="mb-0">
+        O log diz qual degrau foi entregue. Se nem 5 fps couber, você recebe <strong>o arquivo mais um
+        aviso alto</strong> dizendo o que cortar — porque um GIF de 6 MB com aviso é mais útil que
+        nenhum GIF. A escala para em 5 e não desce a 2: abaixo disso o arquivo é pequeno e a demo é
+        ilegível, que não é a troca que ninguém pediu.
+      </p>
+
       <h3 class="h5 mt-4">Variáveis de ambiente</h3>
       <div class="table-responsive">
         <table class="table table-sm align-middle">
           <thead><tr><th>Variável</th><th>Para quê</th></tr></thead>
           <tbody>
-            <tr><td><code>OPENAI_API_KEY</code></td><td>Obrigatória para o fluxo guiado e para a narração</td></tr>
+            <tr><td><code>OPENAI_API_KEY</code></td><td>Obrigatória para o fluxo guiado (escreve o roteiro) e para a narração. Com <code>--format gif|webp</code> a narração não é sintetizada, então só o roteiro precisa dela</td></tr>
             <tr><td><code>DEMOVID_RECORDER</code></td><td><code>gsr</code> | <code>ffmpeg</code> — força o backend de captura</td></tr>
             <tr><td><code>DEMOVID_BROWSER</code></td><td>Sobrescreve o executável do browser</td></tr>
             <tr><td><code>DEMOVID_REC_DIR</code></td><td>Onde os MP4 são escritos (padrão: <code>~/Videos</code>)</td></tr>
@@ -314,7 +394,8 @@ steps:
   - action: type
     target: "#busca"
     value: "REQ-88413"
-    say: A busca aceita o protocolo ou o nome do paciente.</code></pre>
+    say: A busca aceita o protocolo ou o nome do paciente.
+    caption: A busca aceita protocolo ou nome do paciente   # usado no modo GIF</code></pre>
 
       <div class="alert alert-info d-flex gap-2" role="alert">
         <i class="bi bi-link-45deg flex-shrink-0"></i>
@@ -347,20 +428,39 @@ steps:
           <tbody>
             <tr><td><code>target</code></td><td>string</td><td>Seletor CSS, ou um locator <code>text=</code>/<code>role=</code> do Playwright</td></tr>
             <tr><td><code>value</code></td><td>string</td><td>URL do <code>goto</code>, texto do <code>type</code>, ms do <code>wait</code></td></tr>
-            <tr><td><code>say</code></td><td>string</td><td>A narração. É <strong>quebrada em frases, uma chamada de TTS cada</strong>, e o passo avança no <code>onended</code> do último clipe</td></tr>
+            <tr><td><code>say</code></td><td>string</td><td>A narração <em>falada</em>. É <strong>quebrada em frases, uma chamada de TTS cada</strong>, e o passo avança no <code>onended</code> do último clipe</td></tr>
+            <tr><td><code>caption</code></td><td>string</td><td>O texto do balão quando <strong>não há voz</strong> (<code>--format gif|webp</code>). Português <em>escrito</em>, uma frase, autocontido. Ausente, o modo mudo cai no <code>say</code></td></tr>
             <tr><td><code>zoom</code></td><td>1–4</td><td>Sobrescreve o zoom do preset neste passo. <code>1</code> desliga o zoom aqui</td></tr>
             <tr><td><code>holdMs</code></td><td>0–30000</td><td>Segura mais um tempo depois que o áudio do passo termina</td></tr>
           </tbody>
         </table>
       </div>
 
+      <div class="alert alert-secondary d-flex gap-2" role="alert">
+        <i class="bi bi-pencil-square flex-shrink-0"></i>
+        <div><strong>Por que dois campos e não um encurtado.</strong> Falado e escrito são registros
+          diferentes. Uma frase narrada pode depender do movimento da tela, porque a voz e o movimento
+          chegam juntos; uma legenda num GIF em loop é lida <em>a frio</em>, possivelmente começando pelo
+          meio, sem nada que preencha o que ela deixou de fora. Daí o mesmo YAML servir aos dois
+          produtos com dois textos, em vez de um texto servindo mal aos dois.</div>
+      </div>
+
       <h3 class="h5 mt-4">Presets e locale</h3>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Preset</th><th>Para quê</th><th>Balão</th></tr></thead>
+          <tbody>
+            <tr><td><code>boardroom</code></td><td>Comitê de avaliação: caro e controlado, nada repica</td><td>17px, zoom 1.4</td></tr>
+            <tr><td><code>helpdesk</code></td><td>Usuário perdido: o mais lento e tolerante, escurecimento pesado</td><td>19px, zoom 1.6</td></tr>
+            <tr><td><code>readme</code></td><td><strong>GIF sem voz</strong>: o balão é o único canal e o movimento é pago por quadro</td><td>21px, zoom 1.25, sem pulso</td></tr>
+          </tbody>
+        </table>
+      </div>
       <p>
-        Preset é <strong>aparência e ritmo</strong>: <code>boardroom</code> (comitê de avaliação, contido) ou
-        <code>helpdesk</code> (usuário confuso — mais devagar, escurecimento mais pesado, texto maior).
-        O locale (<code>pt-BR</code>) é uma camada separada que compõe por cima. A câmera, ao contrário, é
-        <strong>segurança</strong>: o ensaio decide o "degrau" e <em>rebaixa</em> sozinho quando não dá — se o
-        relatório disser <code>R3</code>, foi ele avisando que gravou sem zoom, e a razão está na saída.
+        Preset é <strong>aparência e ritmo</strong>; o locale (<code>pt-BR</code>) é uma camada separada que
+        compõe por cima. A câmera, ao contrário, é <strong>segurança</strong>: o ensaio decide o "degrau" e
+        <em>rebaixa</em> sozinho quando não dá — se o relatório disser <code>R3</code>, foi ele avisando que
+        gravou sem zoom, e a razão está na saída.
       </p>
 
       <h3 class="h5 mt-4">Por que a validação é dupla</h3>
@@ -435,6 +535,7 @@ steps:
             <tr><td><code>src/record.ts</code> · <code>src/browser.ts</code></td><td>A execução de um take; abrir o Chromium com perfil descartável</td></tr>
             <tr><td><code>src/recorder/**</code></td><td>Os dois backends (gsr, ffmpeg), sinais, guarda e o env da sessão gráfica</td></tr>
             <tr><td><code>src/timeline.ts</code> · <code>src/postprocess.ts</code></td><td>O <code>.timeline.json</code>, as notas de corte e o passe opcional de crop</td></tr>
+            <tr><td><code>src/gif.ts</code></td><td>A conversão para GIF/WebP e o laço que tira quadros até caber no orçamento</td></tr>
             <tr><td><code>overlay/src/**</code></td><td>Palco, balão, cursor, spotlight, sequenciador, animação (<code>motion/mini</code>)</td></tr>
             <tr><td><code>src/exec.ts</code></td><td><code>run(bin, args[])</code> — <strong>todo</strong> binário externo passa por aqui, sem shell</td></tr>
           </tbody>
@@ -567,16 +668,33 @@ node .agents/scripts/skill-lint.mjs             # só a forma</code></pre>
           Cerimônia sem sinal ensina o usuário a contornar o router.</li>
       </ul>
 
-      <div class="alert alert-warning d-flex gap-2 mt-4" role="alert">
-        <i class="bi bi-clock-history flex-shrink-0"></i>
+      <h3 class="h5 mt-4">O pipeline em ação: o que a feature do GIF escreveu na memória</h3>
+      <p>
+        Quatro candidatos saíram da implementação do modo GIF. <strong>Dois foram descartados</strong> por
+        falta de sinal externo — inclusive uma armadilha de escape do ffmpeg que é real, medida e útil,
+        mas que nenhum comando declarado por uma skill consegue verificar; ela ficou registrada como
+        comentário no ponto exato do código, que é onde vai ser lida. Os outros três passaram pelo portão:
+      </p>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Skill</th><th>O que entrou</th><th>Sinal que autorizou</th></tr></thead>
+          <tbody>
+            <tr><td><code>working-with-the-camera-stage</code></td><td>Remontar <strong>não</strong> reestiliza: <code>mountOverlay</code> retorna cedo, e o passo <code>goto</code> precisa repassar o estilo</td><td><code>npm run test:e2e</code> — vermelho antes, verde depois</td></tr>
+            <tr><td><code>testing-demovid</code></td><td><strong>Substituição</strong>: a checagem de slot de captura por <code>pgrep -f</code> dá falso positivo</td><td>Reproduzido ao vivo: <code>pgrep -f</code> disse "ocupado" com a máquina ociosa</td></tr>
+            <tr><td><code>running-demo-recordings</code></td><td>O modo GIF, e a <strong>correção</strong> da alegação de que <code>script</code>/<code>refine</code> não existiam</td><td>Entailment: <code>src/scriptflow.ts</code> e o <code>case "script"</code> em <code>src/index.ts</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="alert alert-success d-flex gap-2" role="alert">
+        <i class="bi bi-check-circle-fill flex-shrink-0"></i>
         <div>
-          <strong>Uma divergência real, encontrada ao montar este documento.</strong> A skill
-          <code>running-demo-recordings</code> afirma que <code>script</code> e <code>refine</code>
-          "<em>não estão implementados — escreva o YAML à mão</em>". Isso deixou de ser verdade: o fluxo
-          guiado existe em <code>src/scriptflow.ts</code> e <code>demovid script</code> está ligado em
-          <code>src/index.ts</code> (commit <code>b4f9175</code>, "demovid 2.0"). É exatamente o caso de
-          conhecimento <em>stale</em> que o <code>meta-skill-consolidate</code> existe para resolver —
-          e o conserto tem que passar pelo portão acima, não por uma edição direta.
+          <strong>Aquele conhecimento stale foi consertado.</strong> A versão anterior deste documento
+          registrava que <code>running-demo-recordings</code> afirmava que <code>script</code> e
+          <code>refine</code> "não estão implementados". Passou pelo portão e foi substituído —
+          <em>replace</em>, não <em>append</em>, porque duas regras que discordam são piores que
+          qualquer uma delas sozinha: o leitor não sabe qual está viva e a velha continua sendo
+          recuperada. <code>skill-verify.mjs --all</code>: 11 de 11 verdes.
         </div>
       </div>
     </div>
@@ -619,6 +737,17 @@ node .agents/scripts/skill-lint.mjs             # só a forma</code></pre>
           <code>position: fixed; left:0; right:0</code> troca o bloco contêiner do viewport para a caixa de
           padding do palco, e uma barra de rolagem visível deixa essa caixa 15px mais estreita. O header vai
           de 1353 para 1338px em silêncio.</div>
+      </div>
+
+      <div class="alert alert-warning d-flex gap-2" role="alert">
+        <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
+        <div><strong>Remontar o overlay não o reestiliza.</strong> <code>mountOverlay</code> devolve o host
+          existente intacto, então um segundo <code>mount(outroEstilo)</code> no mesmo documento não muda
+          nada visualmente. Consequência que era um bug vivo: uma navegação <em>produz</em> documento novo,
+          e o passo <code>goto</code> remontava <strong>sem estilo</strong> — depois de qualquer
+          <code>goto</code> o balão voltava calado para 17px e perdia a esquiva do cursor, o que no modo
+          GIF encolhe o único canal que o espectador tem, no meio da demo. Para testar estilo de preset,
+          use documento novo (<code>page.reload()</code>), não outro <code>mount()</code>.</div>
       </div>
 
       <p class="mb-1"><strong>Afira o overlay contra um baseline capturado na identidade, não contra métrica de
@@ -678,6 +807,38 @@ node .agents/scripts/skill-lint.mjs             # só a forma</code></pre>
           o perfil real: favoritos, extensões e contas logadas iriam parar no vídeo.</li>
       </ul>
 
+      <h3 class="h5 mt-4">GIF, ffmpeg e checagens que mentem</h3>
+
+      <div class="alert alert-danger d-flex gap-2" role="alert">
+        <i class="bi bi-x-octagon-fill flex-shrink-0"></i>
+        <div><strong>Dentro de aspas simples num filtro do ffmpeg, a barra invertida é literal.</strong>
+          Escrever <code>scale=w='min(960\,iw)'</code> — o escape que a intuição pede para a vírgula —
+          produz uma expressão inválida, e o ffmpeg reporta isso como
+          <code>No such filter: ''</code>, apontando para os separadores do grafo em vez do argumento
+          errado. O certo é <code>scale=w='min(960,iw)'</code>, sem escape. Como o
+          <code>run()</code> não usa shell, as aspas simples chegam literais ao ffmpeg, que as
+          interpreta ele mesmo.</div>
+      </div>
+
+      <div class="alert alert-warning d-flex gap-2" role="alert">
+        <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
+        <div><strong><code>pgrep -f 'gpu-screen-recorder -w'</code> casa com a própria invocação.</strong>
+          O shell cujo comando <em>contém</em> o padrão também é um processo, então a checagem informa
+          captura ativa numa máquina ociosa. A direção do erro é a ruim: ela inventa um motivo para pular
+          o teste de gravação, que é como um sinal ausente passa por conflito. Use o nome do processo,
+          ancorado e curto — <code>ps -eo comm | grep -qE '^gpu-screen-rec'</code>. E
+          <code>pgrep -x gpu-screen-recorder</code> também não serve: <code>comm</code> é truncado em 15
+          caracteres.</div>
+      </div>
+
+      <p class="mb-0">
+        <strong>Largura não é o botão de tamanho do GIF; quadro é.</strong> Sem compressão entre quadros e
+        com 256 cores, o que custa é <em>movimento</em> — quadro parado é quase grátis. Reduzir a largura
+        borraria o texto que o balão está apontando; reduzir o fps só remove quadros. É por isso que o
+        <code>readme</code> desliga o pulso do spotlight (movimento perpétuo é o gasto mais caro que
+        existe) e usa a mola de 650ms em vez da de 1500ms.
+      </p>
+
       <h3 class="h5 mt-4">Quando algo dá errado na gravação</h3>
       <div class="table-responsive">
         <table class="table table-sm align-middle">
@@ -689,6 +850,9 @@ node .agents/scripts/skill-lint.mjs             # só a forma</code></pre>
             <tr><td>Gravou tudo sem zoom</td><td>O ensaio rebaixou a câmera para <code>R3</code>; a razão está na saída dele</td></tr>
             <tr><td><code>insufficient_quota</code></td><td>A conta OpenAI está sem crédito. <code>demovid doctor --deep</code> confirma — o check simples não consegue, porque <code>/v1/models</code> é grátis e devolve 200 com saldo zero</td></tr>
             <tr><td>Nenhum elemento endereçável encontrado</td><td>O app provavelmente exige login. Coloque o login <strong>no roteiro</strong>, com credenciais de teste</td></tr>
+            <tr><td>O GIF passou dos 5 MB mesmo a 5 fps</td><td>A escala acabou. Menos passos, texto mais curto, ou <code>--format webp</code> — mediu ~10× menor no mesmo clipe</td></tr>
+            <tr><td>O balão do GIF está pequeno depois de um <code>goto</code></td><td>Era o bug da remontagem sem estilo, acima. Se voltar, é regressão — o e2e trava isso</td></tr>
+            <tr><td><code>Target page … has been closed</code></td><td>Morte de browser não-reproduzível, documentada no <code>src/record.ts</code>. Vista três vezes, nunca reproduzida; o diagnóstico é o que dá para garantir</td></tr>
           </tbody>
         </table>
       </div>
@@ -698,7 +862,8 @@ node .agents/scripts/skill-lint.mjs             # só a forma</code></pre>
 
   <footer class="text-body-secondary small border-top mt-5 pt-3">
     Fontes: <code>README.md</code>, <code>AGENTS.md</code>, <code>.agents/skills/</code> e o código em
-    <code>src/</code> — repositório demovid v0.2.0, em 29/07/2026.
+    <code>src/</code> — repositório demovid v0.2.0, em 29/07/2026. Inclui o modo de saída em
+    GIF/WebP e as três atualizações de skill que ele produziu.
     Documento de arquivo único — salve, mande por anexo, abra offline.
   </footer>
 

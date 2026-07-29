@@ -10,7 +10,8 @@ import { BinaryNotFoundError, CommandFailedError } from "./exec.js";
 import { importSessionEnv, RecCapabilityError, RecError } from "./rec.js";
 import { restore } from "./annotate.js";
 import { isInteractive } from "./prompt.js";
-import { record } from "./record.js";
+import { record, type AnimateOptions } from "./record.js";
+import { isAnimationFormat } from "./gif.js";
 import { scriptFlow } from "./scriptflow.js";
 import { parseResolutionSpec, planCapture, resolutionNames, type CapturePlan } from "./resolution.js";
 import { parseStoryboard } from "./storyboard.js";
@@ -45,6 +46,13 @@ OPTIONS
                               \`crop\` a removem — junto com qualquer aviso que o
                               browser resolva mostrar ali — ao custo de um passe
                               de ffmpeg. \`keep\` mantém o passe único puro.
+      --format <fmt>          mp4 | gif | webp               (padrão: mp4)
+                              \`gif\`/\`webp\` entregam SÓ a imagem animada, sem voz:
+                              nenhuma chamada de TTS, o balão é o único canal, e
+                              o arquivo é reduzido tirando quadros até caber no
+                              limite. Sem \`--preset\`, usa o preset \`readme\`.
+      --max-mb <n>            Teto do gif/webp em MB            (padrão: 5)
+      --fps <n>               Quadros por segundo do gif/webp   (padrão: 15)
       --locale <tag>          pt-BR | en-US                  (padrão: pt-BR)
       --browser <path>        Executável do browser (padrão: detecta Brave)
   -y, --yes                   Pula o portão de aprovação e grava direto
@@ -59,21 +67,27 @@ ENV
   DEMOVID_RECORDER            gsr | ffmpeg — força o backend de captura
 
 ENVIRONMENT
-  OPENAI_API_KEY              Obrigatória para \`script\`, \`refine\` e \`voice\`
+  OPENAI_API_KEY              Obrigatória para o fluxo guiado (escreve o roteiro) e para a
+                              narração. Com \`--format gif|webp\` a narração não é
+                              sintetizada, então só o roteiro precisa dela.
   DEMOVID_BROWSER             Sobrescreve o executável do browser
   DEMOVID_REC_DIR             Onde os MP4 são escritos (padrão: ~/Videos)
 
 EXAMPLES
   demovid doctor
   demovid script ~/Projects/meu-app -o demo.yaml
-  demovid refine demo.yaml "mais curto, foca no fluxo de login"
-  demovid voice demo.yaml
   demovid rehearse demo.yaml
   demovid record demo.yaml --preset helpdesk
+  demovid record demo.yaml --format gif
+  demovid record demo.yaml --format webp --max-mb 2
 `;
 
 type CliValues = {
   out?: string | undefined;
+  format?: string | undefined;
+  "max-mb"?: string | undefined;
+  fps?: string | undefined;
+  preset?: string | undefined;
   res?: string | undefined;
   monitor?: string | undefined;
   chrome?: string | undefined;
@@ -86,6 +100,7 @@ type CliValues = {
 async function runScriptFlow(dir: string, values: CliValues): Promise<number> {
   const capture = await buildCapturePlan(values.res, values.monitor);
   const chrome = values.chrome === "keep" || values.chrome === "crop" ? values.chrome : "auto";
+  const animate = buildAnimate({ format: values.format, maxMb: values["max-mb"], fps: values.fps });
   return scriptFlow({
     dir,
     yes: values.yes ?? false,
@@ -95,6 +110,7 @@ async function runScriptFlow(dir: string, values: CliValues): Promise<number> {
       output: values.out ?? "",
       chrome,
       ...(capture ? { capture } : {}),
+      ...(animate ? { animate } : {}),
     },
   });
 }
@@ -124,7 +140,52 @@ interface RunRecordOptions {
   chrome?: string | undefined;
   preset?: string | undefined;
   locale?: string | undefined;
+  format?: string | undefined;
+  maxMb?: string | undefined;
+  fps?: string | undefined;
 }
+
+/**
+ * Resolve `--format` into the animation options, or `undefined` for plain MP4.
+ *
+ * Returning `undefined` rather than `{format:"mp4"}` is what keeps the MP4 path
+ * literally unchanged: `record()` branches on the *presence* of `animate`, so
+ * there is no way for a default here to quietly turn narration off.
+ */
+function buildAnimate(o: {
+  format?: string | undefined;
+  maxMb?: string | undefined;
+  fps?: string | undefined;
+}): AnimateOptions | undefined {
+  const spec = o.format?.toLowerCase();
+  if (!spec || spec === "mp4") {
+    if (o.maxMb || o.fps) {
+      console.warn("[demovid] --max-mb e --fps só valem com --format gif|webp — ignorados");
+    }
+    return undefined;
+  }
+  if (!isAnimationFormat(spec)) {
+    throw new Error(`formato desconhecido: "${o.format}". Use mp4, gif ou webp.`);
+  }
+
+  const maxMb = o.maxMb === undefined ? undefined : Number(o.maxMb);
+  if (maxMb !== undefined && (!Number.isFinite(maxMb) || maxMb <= 0)) {
+    throw new Error(`--max-mb precisa ser um número de MB maior que zero (recebi "${o.maxMb}")`);
+  }
+  const fps = o.fps === undefined ? undefined : Number(o.fps);
+  if (fps !== undefined && (!Number.isInteger(fps) || fps < 1 || fps > 60)) {
+    throw new Error(`--fps precisa ser um inteiro entre 1 e 60 (recebi "${o.fps}")`);
+  }
+
+  return {
+    format: spec,
+    ...(maxMb !== undefined ? { maxBytes: Math.round(maxMb * 1024 * 1024) } : {}),
+    ...(fps !== undefined ? { fps } : {}),
+  };
+}
+
+/** `demo.mp4` → `demo.gif`. The recorder's own extension is never the answer here. */
+const withExtension = (path: string, ext: string): string => path.replace(/\.[^./]+$/, "") + `.${ext}`;
 
 /**
  * Resolve `--res` into a concrete plan. Returns undefined when the user did not
@@ -168,10 +229,24 @@ async function runRecord(path: string, o: RunRecordOptions): Promise<number> {
   if (o.preset) sb.preset = o.preset;
   if (o.locale) sb.locale = o.locale;
 
-  const output = o.out ?? resolve(
-    process.env["DEMOVID_REC_DIR"] ?? `${process.env["HOME"]}/Videos`,
-    `${basename(path).replace(/\.ya?ml$/, "")}.mp4`,
-  );
+  const animate = buildAnimate(o);
+
+  // `--preset` still wins; this only fills the gap. Without it, `--format gif`
+  // on any existing storyboard would inherit boardroom's 17px balloon — and in
+  // silent output that balloon is the entire message. Logged rather than silent,
+  // because a preset the operator did not type is a surprise either way.
+  if (animate && !o.preset && sb.preset !== "readme") {
+    console.warn(`[demovid] --format ${animate.format}: usando o preset readme (era ${sb.preset})`);
+    sb.preset = "readme";
+  }
+
+  const ext = animate?.format ?? "mp4";
+  const output = o.out
+    ? (animate ? withExtension(o.out, ext) : o.out)
+    : resolve(
+        process.env["DEMOVID_REC_DIR"] ?? `${process.env["HOME"]}/Videos`,
+        `${basename(path).replace(/\.ya?ml$/, "")}.${ext}`,
+      );
 
   const capture = await buildCapturePlan(o.res, o.monitor);
   if (capture) {
@@ -191,6 +266,7 @@ async function runRecord(path: string, o: RunRecordOptions): Promise<number> {
     rehearse: o.rehearse,
     chrome,
     ...(capture ? { capture } : {}),
+    ...(animate ? { animate } : {}),
     onLog: (l) => console.warn(`[demovid] ${l}`),
   });
 
@@ -243,6 +319,11 @@ async function main(): Promise<void> {
       // the YAML on every run.
       preset: { type: "string" },
       locale: { type: "string" },
+      // Sem default, como `preset` e `locale`: ausente significa "MP4, o
+      // comportamento de sempre", e um default aqui é uma flag que age sozinha.
+      format: { type: "string" },
+      "max-mb": { type: "string" },
+      fps: { type: "string" },
       browser: { type: "string" },
       yes: { type: "boolean", short: "y", default: false },
       about: { type: "string" },
@@ -296,6 +377,9 @@ async function main(): Promise<void> {
           chrome: values.chrome,
           preset: values.preset,
           locale: values.locale,
+          format: values.format,
+          maxMb: values["max-mb"],
+          fps: values.fps,
         }),
       );
       break;

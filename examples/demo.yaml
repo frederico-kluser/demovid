@@ -3,28 +3,38 @@ url: ./app.html            # relativo ao próprio YAML
 locale: pt-BR
 preset: boardroom
 
+# `say` é a narração falada; `caption` é o texto do balão quando a saída não tem
+# voz (`--format gif` / `--format webp`). Os dois convivem no mesmo arquivo de
+# propósito: escrito e falado são registros diferentes, e um roteiro serve aos
+# dois produtos. Sem `caption`, o modo silencioso cai no `say` — legível, só mais
+# comprido do que precisava.
 steps:
   - action: wait
     value: "600"
     say: >-
       Este é o painel de exames. Ele reúne as requisições em aberto,
       os laudos liberados e o histórico de cada paciente.
+    caption: Painel de exames — requisições, laudos e histórico num só lugar
 
   - action: focus
     target: "#kpi-pendentes"
     say: >-
       Aqui em cima ficam os indicadores do dia. Vinte e quatro requisições
       aguardando coleta.
+    caption: 24 requisições aguardando coleta
 
   - action: hover
     target: "#kpi-liberados"
     say: E doze laudos já liberados nas últimas vinte e quatro horas.
+    caption: 12 laudos liberados nas últimas 24h
 
   - action: type
     target: "#busca"
     value: "REQ-88413"
     say: A busca aceita o protocolo ou o nome do paciente.
+    caption: A busca aceita protocolo ou nome do paciente
 
   - action: click
     target: "#novo"
     say: E uma nova requisição começa por aqui.
+    caption: Nova requisição começa aqui

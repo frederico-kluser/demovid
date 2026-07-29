@@ -37,7 +37,8 @@
     "test": "node --import tsx --test test/*.test.ts",
     "link": "npm run build && npm link && demovid --help",
     "test:e2e": "node test/stage.e2e.mjs",
-    "verify": "npm run typecheck && npm run bake:springs && npm run build && npm test && npm run test:e2e && npm run test:record",
+    "test:gif": "node --import tsx test/gif.e2e.ts",
+    "verify": "npm run typecheck && npm run bake:springs && npm run build && npm test && npm run test:gif && npm run test:e2e && npm run test:record",
     "test:record": "node --import tsx test/record.e2e.ts",
     "verify:pack": "npm pack --dry-run"
   },

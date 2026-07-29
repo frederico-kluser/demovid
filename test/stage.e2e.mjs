@@ -241,6 +241,68 @@ try {
         `é exatamente o bug de os canais de transform se atropelarem`,
     );
   });
+  // ── o balão do modo silencioso ──────────────────────────────────────────
+  //
+  // Com `avoidCursor`, o balão é o único canal e o cursor o único ponteiro, então
+  // um cobrindo o outro esconde metade da mensagem. Aqui só um motor de verdade
+  // serve: a colocação sai de `offsetWidth` com o texto final no lugar, que é
+  // layout medido, não geometria calculável.
+  // Documento novo, e não um segundo `mount()`: `mountOverlay` retorna cedo se o
+  // host já existe, então remontar NÃO reestiliza. Isso é o que fazia o passo
+  // `goto` cair no DEFAULT_STYLE — corrigido em `src/record.ts`, que agora passa
+  // o estilo na remontagem. Aqui o reload é a única forma honesta de testar o
+  // estilo do preset chegando ao balão.
+  await page.reload({ waitUntil: "load" });
+  await page.waitForSelector("#alvo", { state: "attached" });
+
+  const placed = await page.evaluate(async () => {
+    const api = window.__demovid;
+    const style = {
+      cursor: { dotPx: 22, travelFactor: 1.1, accent: "#38BDF8", ring: { toPx: 52, strokePx: 6, durationMs: 500 },
+                spring: { stiffness: 470, damping: 70, mass: 3 } },
+      spotlight: { dim: 0.5, cutoutRadiusPx: 8, paddingPx: 14, ringPx: 2, accent: "#38BDF8", pulse: null },
+      balloon: { maxWidthPx: 460, fontSizePx: 21, lineHeight: 1.45, fontWeight: 500, radiusPx: 12,
+                 paddingPx: [16, 20], bg: "rgba(12,18,32,0.92)", fg: "#F8FAFC", accent: "#38BDF8",
+                 shadow: "0 2px 4px rgba(0,0,0,.18)", placement: "anchored",
+                 backdropBlurPx: 3, avoidCursor: true },
+    };
+    api.mount(style);
+    api.showCursor();
+
+    const alvo = document.querySelector("#alvo").getBoundingClientRect();
+    // Põe o cursor no centro do alvo, que é onde ele fica de verdade num passo.
+    api.cursorPlace(alvo.x + alvo.width / 2, alvo.y + alvo.height / 2);
+    api.say("A busca aceita protocolo ou nome do paciente", "#alvo");
+    await new Promise((r) => setTimeout(r, 700));
+
+    const b = api.shadow.querySelector(".demovid-balloon").getBoundingClientRect();
+    const size = 52; // a pegada visual do cursor: o anel, não só o ponto
+    const cur = {
+      x: alvo.x + alvo.width / 2 - size / 2,
+      y: alvo.y + alvo.height / 2 - size / 2,
+      w: size, h: size,
+    };
+    const hits = (r) => b.x < r.x + r.w && b.x + b.width > r.x && b.y < r.y + r.h && b.y + b.height > r.y;
+    return {
+      onTarget: hits({ x: alvo.x, y: alvo.y, w: alvo.width, h: alvo.height }),
+      onCursor: hits(cur),
+      fontSize: getComputedStyle(api.shadow.querySelector(".demovid-balloon")).fontSize,
+      blur: getComputedStyle(api.shadow.querySelector(".demovid-balloon")).backdropFilter,
+      visible: b.width > 0 && b.height > 0,
+    };
+  });
+
+  await check("o balão aparece e não cobre o alvo", () => {
+    assert.ok(placed.visible, "o balão não tem caixa — sem mensagem, o passo é mudo de verdade");
+    assert.ok(!placed.onTarget, "o balão cobriu o elemento que ele descreve");
+  });
+  await check("com avoidCursor, o balão também não cobre o cursor", () => {
+    assert.ok(!placed.onCursor, "o balão caiu em cima do cursor sintético");
+  });
+  await check("o estilo do preset chega no balão (fonte grande, blur do fundo)", () => {
+    assert.equal(placed.fontSize, "21px");
+    assert.match(placed.blur, /blur\(3px\)/, `backdrop-filter veio "${placed.blur}"`);
+  });
 } finally {
   await ctx.close();
   await rm(PROFILE, { recursive: true, force: true });

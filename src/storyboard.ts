@@ -39,6 +39,21 @@ const StepSchema = z
      */
     say: z.string().optional(),
 
+    /**
+     * The balloon text for silent output (GIF/WebP), where there is no voice and
+     * the balloon is therefore the *only* channel to the viewer.
+     *
+     * Deliberately a separate field from `say` rather than a reuse of it: spoken
+     * Portuguese and read Portuguese are different products. `say` is a sentence
+     * the ear follows once; `caption` is a line the eye scans while the app moves
+     * underneath it, and it has to carry the complete idea on its own because
+     * nothing is going to say the rest out loud.
+     *
+     * Absent, silent mode falls back to `say` — a storyboard written for video
+     * still produces a readable GIF, just a wordier one.
+     */
+    caption: z.string().optional(),
+
     /** Override the preset's zoom for this step. `1` disables zoom here. */
     zoom: z.number().min(1).max(4).optional(),
 
@@ -101,14 +116,14 @@ export const STORYBOARD_JSON_SCHEMA = {
     title: { type: "string", description: "Título curto da demo, em português." },
     url: { type: "string", description: "URL de onde a demo começa." },
     locale: { type: "string", enum: ["pt-BR", "en-US"] },
-    preset: { type: "string", enum: ["boardroom", "helpdesk"] },
+    preset: { type: "string", enum: ["boardroom", "helpdesk", "readme"] },
     steps: {
       type: "array",
       description: "Os passos, em ordem de execução.",
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["action", "target", "value", "say", "zoom", "holdMs"],
+        required: ["action", "target", "value", "say", "caption", "zoom", "holdMs"],
         properties: {
           action: { type: "string", enum: [...ACTIONS] },
           target: {
@@ -126,6 +141,13 @@ export const STORYBOARD_JSON_SCHEMA = {
             description:
               "A narração deste passo, em português natural e falado — não escrito. " +
               "Uma a duas frases. null para um passo silencioso.",
+          },
+          caption: {
+            type: ["string", "null"],
+            description:
+              "O texto do balão para saída SEM voz (GIF/WebP), em português escrito e curto. " +
+              "É a única forma de comunicação nesse modo, então precisa entregar a ideia completa " +
+              "sozinho. Uma frase, sem locução, sem 'agora vamos'. null quando não houver.",
           },
           zoom: {
             type: ["number", "null"],
@@ -149,4 +171,17 @@ export function parseStoryboard(raw: unknown): Storyboard {
 /** All narration in the storyboard, in order. What `demovid voice` synthesises. */
 export function narrationOf(sb: Storyboard): string[] {
   return sb.steps.map((s) => s.say).filter((s): s is string => typeof s === "string" && s.trim().length > 0);
+}
+
+/**
+ * The text the balloon shows for a step.
+ *
+ * One function rather than a `silent ? a : b` at each call site, because there
+ * are three of them (the conductor, the dwell calculation and the timeline mark)
+ * and a disagreement between any two of them is a balloon whose text does not
+ * match the time it is given to be read.
+ */
+export function balloonTextOf(step: Step, silent: boolean): string | undefined {
+  if (!silent) return step.say;
+  return step.caption ?? step.say;
 }

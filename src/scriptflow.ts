@@ -116,12 +116,19 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
     const inventoryText = serializeInventory(inventory);
     const allowed = allowedSelectors(inventory);
 
+    // `animate` no plano de gravação é o que define o produto, e o produto define
+    // o texto: com ele, o modelo escreve `caption` (o balão é o único canal) em
+    // vez de só `say`. Derivado daqui em vez de ser um parâmetro próprio para que
+    // não exista o estado incoerente "roteiro de GIF, gravação de vídeo".
+    const silent = opts.recording.animate !== undefined;
+
     let storyboard = await writeStoryboard({
       request,
       inventory: inventoryText,
       allowed,
       appName: scan.name,
       url: server.url,
+      silent,
       log,
     });
 
@@ -159,14 +166,16 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
         allowed,
         appName: scan.name,
         url: server.url,
+        silent,
         log,
       });
     }
 
     // ── gravar ────────────────────────────────────────────────────────────
+    const ext = opts.recording.animate?.format ?? "mp4";
     const output =
       opts.recording.output ||
-      resolve(dir, `${basename(storyboardPath).replace(/\.ya?ml$/, "")}.mp4`);
+      resolve(dir, `${basename(storyboardPath).replace(/\.ya?ml$/, "")}.${ext}`);
 
     const t0 = Date.now();
     const report = await record({ ...opts.recording, storyboard, output, onLog: log });

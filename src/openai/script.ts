@@ -70,6 +70,41 @@ HARD RULES
   text in value. "wait" needs either a target to wait for or milliseconds in value.
 - Start with a "wait" step that introduces the app while the first sentence plays.`;
 
+/**
+ * Appended for silent output. The difference is not "shorter `say`" — it is a
+ * different field with a different job.
+ *
+ * A narrated step can afford a sentence that only makes sense while the screen
+ * moves, because the voice and the motion arrive together. A caption in a looping
+ * GIF is read cold, possibly starting from the middle, with nothing to fill in
+ * what it left out. So it has to be self-contained, and it has to fit in the
+ * reading budget the preset allows — `pacing.cps` at 12 with `dwellCapMs` at 8 s
+ * is about 96 characters before the step is holding the frame longer than it is
+ * worth, and every held frame is bytes in a format with no inter-frame
+ * compression.
+ */
+const GIF_ADDENDUM = `
+
+## MODO GIF — SEM VOZ
+
+This storyboard is for a silent animated GIF, so "caption" is the ONLY channel to the viewer.
+Nothing will be said out loud. Write BOTH fields:
+
+- "caption" (required on every step that communicates anything): written Portuguese, not spoken.
+  ONE short sentence, ideally under 90 characters, never over 120. It must carry the complete idea on
+  its own — the viewer may start reading mid-loop. No "agora vamos", no "veja que", no "aqui em
+  cima": those depend on a voice and a moment. Prefer naming the thing and its consequence
+  ("A busca aceita protocolo ou nome do paciente"). Sentence case, no final period on fragments.
+- "say": write it anyway, in spoken Portuguese as usual. It costs nothing here and makes the same
+  file re-recordable as a narrated video later.
+- "preset": use "readme".
+- Prefer 4 to 7 steps, not 5 to 9. A GIF is paid for by the frame: every step is roughly three
+  seconds of file. A demo that needs nine steps needs a video, and saying so is better than
+  delivering a 12 MB GIF.`;
+
+/** The system prompt for the output being written. */
+const systemFor = (silent: boolean): string => (silent ? SYSTEM + GIF_ADDENDUM : SYSTEM);
+
 interface ResponsesResult {
   status?: string;
   incomplete_details?: { reason?: string };
@@ -120,6 +155,13 @@ export function stripNulls(raw: unknown): unknown {
 
 interface CallOptions {
   input: string;
+  /**
+   * The system prompt. Threaded per call rather than read from the module,
+   * because the repair round-trips reuse the conversation through
+   * `previous_response_id` and a repair that arrived under different
+   * instructions than the draft would be asked to fix rules it never had.
+   */
+  system: string;
   previousResponseId?: string;
   maxOutputTokens: number;
   signal?: AbortSignal;
@@ -133,7 +175,7 @@ async function callModel(opts: CallOptions): Promise<{ text: string; id: string 
     model: MODEL,
     reasoning: { effort: EFFORT },
     max_output_tokens: opts.maxOutputTokens,
-    instructions: SYSTEM,
+    instructions: opts.system,
     ...(opts.previousResponseId ? { previous_response_id: opts.previousResponseId } : {}),
     input: [{ role: "user", content: [{ type: "input_text", text: opts.input }] }],
     text: {
@@ -199,6 +241,11 @@ async function callWithGrowingBudget(
 export interface WriteOptions {
   /** What the operator asked for, in Portuguese. */
   request: string;
+  /**
+   * Writing for silent output (GIF/WebP): the model also fills `caption`, which
+   * becomes the only channel to the viewer.
+   */
+  silent?: boolean;
   /** Serialised inventory of verified selectors. */
   inventory: string;
   /** Selectors the model is allowed to use. */
@@ -229,8 +276,9 @@ export async function writeStoryboard(opts: WriteOptions): Promise<Storyboard> {
     `## INVENTORY (the ONLY selectors you may use)\n${opts.inventory}\n\n` +
     `## PEDIDO DO USUÁRIO (em português — é isto que a demo tem que mostrar)\n${opts.request}`;
 
+  const system = systemFor(opts.silent ?? false);
   opts.log(`pensando com ${MODEL} (esforço ${EFFORT}) — isso leva alguns minutos`);
-  let { text, id } = await callWithGrowingBudget({ input: header }, opts.log);
+  let { text, id } = await callWithGrowingBudget({ input: header, system }, opts.log);
 
   // Up to two repairs. `strict` already guarantees the SHAPE, so anything wrong
   // here is meaning: a zod cross-field rule, or a selector that is not in the
@@ -266,6 +314,7 @@ export async function writeStoryboard(opts: WriteOptions): Promise<Storyboard> {
         input:
           `The storyboard you just produced has problems. Fix ONLY these and return the whole ` +
           `storyboard again:\n\n${problems.map((p) => `- ${p}`).join("\n")}`,
+        system,
         previousResponseId: id,
       },
       opts.log,
@@ -282,13 +331,14 @@ export interface RefineOptions extends Omit<WriteOptions, "request"> {
 }
 
 export async function refineStoryboard(opts: RefineOptions): Promise<Storyboard> {
+  const system = systemFor(opts.silent ?? false);
   opts.log(`revisando o roteiro com ${MODEL}`);
   const input =
     `## ROTEIRO ATUAL\n${JSON.stringify(opts.current, null, 2)}\n\n` +
     `## INVENTORY (the ONLY selectors you may use)\n${opts.inventory}\n\n` +
     `## O QUE MUDAR (em português)\n${opts.instruction}`;
 
-  let { text, id } = await callWithGrowingBudget({ input }, opts.log);
+  let { text, id } = await callWithGrowingBudget({ input, system }, opts.log);
 
   for (let attempt = 0; attempt < 3; attempt++) {
     let problems: string[] = [];
@@ -313,6 +363,7 @@ export async function refineStoryboard(opts: RefineOptions): Promise<Storyboard>
         input: `Fix ONLY these and return the whole storyboard again:\n\n${problems
           .map((p) => `- ${p}`)
           .join("\n")}`,
+        system,
         previousResponseId: id,
       },
       opts.log,

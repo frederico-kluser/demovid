@@ -44,13 +44,37 @@ steps:
     say: A busca aceita o protocolo ou o nome do paciente.
 ```
 
+## A GIF for a README, with no voice at all
+
+```bash
+demovid record demo.yaml --format gif           # → demo.gif, ≤ 5 MB, no API calls for audio
+demovid record demo.yaml --format webp          # same pass, usually 5–10× smaller
+```
+
+`--format gif` (or `webp`) is a different product, not the MP4 with the sound off:
+
+- **No narration is synthesised.** Not muted — never requested. A silent take costs nothing in TTS.
+- **The balloon becomes the only channel**, so the storyboard's `caption` field is used instead of
+  `say` (falling back to `say` when a step has none), and the `readme` preset makes it big enough to
+  read: 21px, slight transparency over a 3px backdrop blur, and placement that keeps clear of the
+  cursor as well as of the element it describes.
+- **Step timing comes from the reading budget** — `pacing.cps` and the dwell floors — because there is
+  no `onended` to wait for.
+- **5 MB is a hard ceiling.** Over it, frames are dropped (15 → 12 → 10 → 8 → 6 → 5 fps) until the
+  file fits, and the log says which rung shipped. If even 5 fps is too big it hands you the file with
+  a loud warning rather than nothing.
+
+Measured on a 4 s 1280x720 source: **GIF 1.08 MB, WebP 0.10 MB**. GitHub renders both in READMEs,
+issues and PR comments, so `webp` is the better default whenever the audience is GitHub only; `gif` is
+what still works in npm, PyPI and older wikis.
+
 ---
 
 ## Status
 
-Working: the guided flow, `doctor`, `rehearse`, `record`, `restore`. Presets `boardroom` and
-`helpdesk`, locale `pt-BR`. Resolutions from `720p` to `reels` (9:16 vertical), plus any of
-Playwright's 207 device names.
+Working: the guided flow, `doctor`, `rehearse`, `record`, `restore`. Presets `boardroom`, `helpdesk`
+and `readme`, locale `pt-BR`. Output as MP4, GIF or animated WebP. Resolutions from `720p` to `reels`
+(9:16 vertical), plus any of Playwright's 207 device names.
 
 ## Requirements
 

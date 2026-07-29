@@ -16,19 +16,20 @@
  * some apps ignore untrusted ones. The synthetic cursor is only ever the visual
  * half — it draws where the real, trusted click is about to land.
  */
-import { mkdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, rm, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
 import "./overlay-api.js"; // traz a declaração de `window.__demovid`
 import { chromeHeightPx, launchBrowser, setContentSize, type LaunchedBrowser } from "./browser.js";
 import { installEmulation } from "./emulate.js";
 import { synthesize, type Clip } from "./openai/tts.js";
+import { encodeAnimation, type AnimationFormat } from "./gif.js";
 import { finalizeVideo, probeVideo, type VideoInfo } from "./postprocess.js";
 import { applyLocale, dwellFor, LOCALES, PRESETS, type Preset } from "./presets/index.js";
 import { startRecording, type Recording } from "./rec.js";
 import type { CapturePlan } from "./resolution.js";
 import { splitSentences } from "./openai/tts.js";
-import type { Step, Storyboard } from "./storyboard.js";
+import { balloonTextOf, type Step, type Storyboard } from "./storyboard.js";
 import { buildTimeline, timelinePathFor, TimelineRecorder, writeTimeline } from "./timeline.js";
 import { parkPointer, windowGeometry } from "./x11.js";
 
@@ -72,7 +73,20 @@ export interface RecordOptions {
   chrome?: "keep" | "crop" | "auto";
   /** Skip the recorder entirely — drives the browser and reports, records nothing. */
   rehearse?: boolean;
+  /**
+   * Deliver an animated image instead of an MP4. Implies silent: no TTS call is
+   * made, no audio is captured, and the balloon carries the whole message.
+   */
+  animate?: AnimateOptions;
   onLog?: (line: string) => void;
+}
+
+export interface AnimateOptions {
+  format: AnimationFormat;
+  /** Hard ceiling in bytes. Frames are dropped until the file fits. */
+  maxBytes?: number;
+  fps?: number;
+  width?: number;
 }
 
 export interface RecordReport {
@@ -151,15 +165,36 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
   });
 
   // ── 1. narração, antes de qualquer coisa ──────────────────────────────────
+  //
+  // Silent output takes this whole block out. Not "synthesises and mutes" —
+  // `synthesize` is where the money is spent, so a GIF that paid for audio it
+  // then threw away would be the expensive version of free.
+  const silent = opts.animate !== undefined;
   const cacheDir = opts.cacheDir ?? join(process.cwd(), ".demovid-cache");
-  await mkdir(cacheDir, { recursive: true });
 
-  const perStep = sb.steps.map((s) => (s.say ? splitSentences(s.say) : []));
-  const clips = await synthesize(perStep.flat(), {
-    cacheDir,
-    profile: { voice: preset.voice.voice, instructions: preset.voice.instructions, targetWpm: preset.voice.targetWpm },
-    onProgress: (d, t, cached) => log(`voz ${d}/${t}${cached ? " (cache)" : ""}`),
-  });
+  // The recorder only ever writes an MP4; a GIF is a conversion of one. The
+  // intermediate is a dotfile beside the real output rather than in /tmp, so it
+  // lands on the same filesystem — a rename or a large write across devices is
+  // exactly where a 200 MB capture runs out of room in the least helpful way.
+  const capturePath = opts.animate
+    ? join(dirname(opts.output), `.demovid-capture-${process.pid}.mp4`)
+    : opts.output;
+
+  const perStep = silent
+    ? sb.steps.map(() => [] as string[])
+    : sb.steps.map((s) => (s.say ? splitSentences(s.say) : []));
+
+  let clips: Clip[] = [];
+  if (silent) {
+    log("modo silencioso: nenhuma chamada de TTS, o balão é o único canal");
+  } else {
+    await mkdir(cacheDir, { recursive: true });
+    clips = await synthesize(perStep.flat(), {
+      cacheDir,
+      profile: { voice: preset.voice.voice, instructions: preset.voice.instructions, targetWpm: preset.voice.targetWpm },
+      onProgress: (d, t, cached) => log(`voz ${d}/${t}${cached ? " (cache)" : ""}`),
+    });
+  }
 
   // Map each step back to its clips, in order.
   const clipsByStep: Clip[][] = [];
@@ -301,11 +336,10 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
       warnings.push("a página não chegou a `load` em 30s — seguindo com o que carregou");
     });
 
-    const mounted = await page.evaluate((style) => window.__demovid?.mount(style), {
-      cursor: { ...preset.cursor, accent: preset.balloon.accent },
-      spotlight: { ...preset.spotlight, accent: preset.balloon.accent },
-      balloon: preset.balloon,
-    } as never);
+    const mounted = await page.evaluate(
+      (style) => window.__demovid?.mount(style),
+      overlayStyleOf(preset) as never,
+    );
 
     if (!mounted?.stage) {
       // The stage is the only optional layer. Without it there is no zoom, but
@@ -330,8 +364,12 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
       recording = await startRecording({
         // Always the window, never a screen region. See the note above.
         target: { kind: "window", windowId: browser.windowId },
-        output: opts.output,
-        audio: "system",
+        output: capturePath,
+        // Silent output captures no audio at all. Beyond saving an encode, this
+        // is a privacy property: the captured source is the default sink's
+        // monitor, so a "silent" take that still recorded system audio would
+        // pick up whatever else the machine happens to be playing.
+        audio: silent ? "none" : "system",
         fps: 60,
         // The exact anchor between this process's clock and the video's t=0.
         firstFrameTs: true,
@@ -361,7 +399,7 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
       const stepEvent = tl.mark("step-start", { action: step.action, target: step.target }, i);
       try {
         if (died) throw new Error(`o browser morreu antes deste passo: ${died}`);
-        await runStep(page, step, preset, clipsByStep[i] ?? [], cameraRung, log, tl, i);
+        await runStep(page, step, preset, clipsByStep[i] ?? [], cameraRung, log, tl, i, silent);
       } catch (err) {
         report.ok = false;
         report.detail = (err as Error).message;
@@ -406,9 +444,11 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
       const finished = await finalizeCapture(stopped.output, plan, cropRect, log);
       for (const w of finished.warnings) warnings.push(w);
 
-      const timelinePath = timelinePathFor(stopped.output);
+      // Beside the file the operator ends up holding, not beside the throwaway
+      // capture — `demo.gif` gets `demo.timeline.json`.
+      const timelinePath = timelinePathFor(opts.output);
       const timeline = buildTimeline({
-        outputPath: stopped.output,
+        outputPath: opts.output,
         video: finished.info,
         backend: rec.backend,
         scaled: plan?.scaleNeeded ?? false,
@@ -429,6 +469,46 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
         `timeline: ${timelinePath} (relógio ${timeline.clock.method}, ±${timeline.clock.residualMs}ms, ` +
           `${timeline.cuts.length} ponto(s) de corte)`,
       );
+
+      // ── 5. o GIF, quando foi ele o pedido ─────────────────────────────────
+      //
+      // `buildTimeline` above deliberately used the *capture's* info: every
+      // timestamp in the sidecar is in capture time, and the animation's own
+      // frame rate is a property of the file, not of the clock.
+      if (opts.animate) {
+        const enc = await encodeAnimation({
+          input: stopped.output,
+          output: opts.output,
+          format: opts.animate.format,
+          ...(opts.animate.fps !== undefined ? { fps: opts.animate.fps } : {}),
+          ...(opts.animate.width !== undefined ? { width: opts.animate.width } : {}),
+          ...(opts.animate.maxBytes !== undefined ? { maxBytes: opts.animate.maxBytes } : {}),
+          onLog: log,
+        });
+
+        if (!enc.withinBudget) {
+          const w =
+            `o ${opts.animate.format} ficou em ${(enc.bytes / 1024 / 1024).toFixed(1)} MB mesmo a ` +
+            `${enc.fps}fps, o mínimo da escala. Para caber: menos passos, texto mais curto, ` +
+            `ou --format webp (mede uma ordem de grandeza menor no mesmo clipe)`;
+          warnings.push(w);
+          log(`aviso: ${w}`);
+        }
+
+        await rm(stopped.output, { force: true }).catch(() => {
+          warnings.push(`não consegui apagar a captura intermediária ${stopped.output}`);
+        });
+
+        return {
+          output: opts.output,
+          bytes: enc.bytes,
+          steps,
+          cameraRung,
+          warnings,
+          video: await probeVideo(opts.output),
+          timeline: timelinePath,
+        };
+      }
 
       return {
         output: stopped.output,
@@ -451,6 +531,25 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
 
 /** Encoders reject odd dimensions; crop geometry must land on even numbers. */
 const even = (n: number): number => Math.max(2, Math.floor(n / 2) * 2);
+
+/**
+ * The overlay style for a preset.
+ *
+ * Extracted because `mount()` is called from two places — once after the initial
+ * `goto` and again after every `goto` *step* — and the second one used to pass no
+ * style at all. `mountOverlay` early-returns on an existing host, so on a fresh
+ * document (which is what a navigation produces) the styleless call rebuilt the
+ * whole overlay from `DEFAULT_STYLE`: after any navigation the balloon silently
+ * reverted to 17px and lost `avoidCursor`, which for silent output means the only
+ * channel to the viewer shrank mid-demo.
+ */
+function overlayStyleOf(preset: Preset): unknown {
+  return {
+    cursor: { ...preset.cursor, accent: preset.balloon.accent },
+    spotlight: { ...preset.spotlight, accent: preset.balloon.accent },
+    balloon: preset.balloon,
+  };
+}
 
 /**
  * The camera spring, as physical constants for the overlay to rebuild.
@@ -553,6 +652,7 @@ async function runStep(
   log: (s: string) => void,
   tl: TimelineRecorder,
   index: number,
+  silent: boolean,
 ): Promise<void> {
   // ── aim ──────────────────────────────────────────────────────────────────
   if (step.target) {
@@ -607,12 +707,13 @@ async function runStep(
   }
 
   // ── narrate ──────────────────────────────────────────────────────────────
-  if (step.say) {
+  const balloonText = balloonTextOf(step, silent);
+  if (balloonText) {
     await page.evaluate(
       ([text, sel]) => window.__demovid!.say(text as string, (sel as string | undefined) ?? undefined),
-      [step.say, step.target] as const,
+      [balloonText, step.target] as const,
     );
-    tl.mark("balloon-show", { text: step.say }, index);
+    tl.mark("balloon-show", { text: balloonText }, index);
   }
 
   let audioMs = 0;
@@ -675,7 +776,12 @@ async function runStep(
       break;
     case "goto":
       await page.goto(step.value!, { waitUntil: "domcontentloaded", timeout: 30_000 });
-      await page.evaluate(() => window.__demovid?.mount());
+      // WITH the style. A navigation gives a fresh document, so this rebuilds the
+      // overlay from scratch — and a styleless rebuild fell back to DEFAULT_STYLE.
+      await page.evaluate(
+        (style) => window.__demovid?.mount(style),
+        overlayStyleOf(preset) as never,
+      );
       break;
     case "wait": {
       if (step.target) await locatorFor(page, step.target).waitFor({ state: "visible", timeout: 15_000 });
@@ -686,7 +792,12 @@ async function runStep(
   tl.end(act);
 
   // ── dwell ────────────────────────────────────────────────────────────────
-  const dwell = dwellFor(preset, audioMs, step.say ?? "");
+  //
+  // With `audioMs` at 0 — every silent step — `dwellFor` falls through to its
+  // text floors, which is what they were written for: `max(byWords, byReading)`.
+  // No separate silent-pacing path is needed, and adding one would be a second
+  // place for the two numbers to disagree.
+  const dwell = dwellFor(preset, audioMs, balloonText ?? "");
   const holdMs = Math.max(0, dwell - audioMs) + (step.holdMs ?? 0);
   if (holdMs > 0) {
     const wait = tl.mark("dwell", { reason: step.holdMs ? "holdMs" : "ritmo do preset", holdMs }, index);
