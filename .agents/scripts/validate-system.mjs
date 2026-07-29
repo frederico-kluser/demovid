@@ -199,7 +199,9 @@ const treeBefore = sh("git status --porcelain -- src overlay .agents/skills").ou
 
 check("removing a documented behaviour turns its skill red (code-aware)", () => {
   return withMutation(
-    "src/rec.ts",
+    // Follows the code: the recorder moved out of `src/rec.ts` (now a re-export
+    // facade) into `src/recorder/` when the external bash wrapper was absorbed.
+    "src/recorder/index.ts",
     (orig) => orig.replace('this.#child.kill("SIGUSR2");', 'this.#child.kill("SIGTERM"); // simulated refactor'),
     () => {
       const r = sh("node .agents/scripts/skill-verify.mjs recording-with-rec");

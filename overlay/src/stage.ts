@@ -13,6 +13,8 @@
  * with the viewport" premise holds.
  */
 
+import { cancelAnim, springTo, type SpringSpec } from "./anim.js";
+
 export interface Camera {
   tx: number;
   ty: number;
@@ -116,11 +118,46 @@ export function mountStage(): HTMLElement {
   return el;
 }
 
-/** Set the camera immediately (the `crisp` path calls this every frame). */
+/** Set the camera immediately, with no animation. */
 export function setCamera(c: Camera): void {
   if (!stage) throw new Error("demovid: stage not mounted");
+  // A live WAAPI animation overrides inline styles regardless of specificity,
+  // so without this the write below would silently do nothing whenever a camera
+  // move was still in flight.
+  cancelAnim(stage, "transform");
   cam = c;
   stage.style.transform = cameraToCss(c);
+}
+
+/**
+ * Animate the camera, resolving once it has settled.
+ *
+ * This replaces writing `stage.style.transition` from the Node side and then
+ * sleeping for a guessed duration. That approach left the transition string
+ * parked on the element forever, so the final `setCamera(identity)` at the end
+ * of a take either transitioned or snapped depending on whether the last step
+ * happened to zoom — the ending was not deterministic.
+ *
+ * The ban on `will-change: transform` is NOT violated by animating here. WAAPI
+ * promotes the stage to its own compositor layer only while the animation is
+ * running; `motion/mini` writes the final value to inline style and cancels,
+ * which releases the promotion and lets Chromium re-raster at the landed scale.
+ * `will-change` would make that promotion permanent, which is what pins the
+ * raster and makes magnified text blurry forever.
+ *
+ * The one new hazard: never leave a paused or filled animation parked on the
+ * stage, because that is the same permanent promotion by another route. The
+ * overlay e2e asserts `stage.getAnimations().length === 0` after settling.
+ */
+export async function cameraTo(c: Camera, spec: SpringSpec, hintMs = 900): Promise<void> {
+  if (!stage) throw new Error("demovid: stage not mounted");
+  cam = c;
+  await springTo(stage, "transform", cameraToCss(c), spec, hintMs).finished;
+}
+
+/** For the e2e: is anything still animating the stage? */
+export function stageAnimationCount(): number {
+  return stage ? stage.getAnimations().length : 0;
 }
 
 export function getCamera(): Camera {

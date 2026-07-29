@@ -16,6 +16,8 @@
  * frame is exactly what a recorder does not want. We take its vocabulary
  * (offset / shift / flip / arrow / hide) and none of its scheduling.
  */
+import { cancelAnim, springTo } from "./anim.js";
+
 export interface BalloonStyle {
   maxWidthPx: number;
   fontSizePx: number;
@@ -48,6 +50,9 @@ export class Balloon {
   #el: HTMLElement;
   #tail: HTMLElement;
   #style: BalloonStyle;
+  /** Where the balloon currently is. Position lives in `transform`, not `left`/`top`. */
+  #x = 0;
+  #y = 0;
 
   constructor(root: ShadowRoot, style: BalloonStyle) {
     this.#style = style;
@@ -61,7 +66,7 @@ export class Balloon {
       `font:${style.fontWeight} ${style.fontSizePx}px/${style.lineHeight} ` +
       `Inter, -apple-system, "Segoe UI", system-ui, sans-serif;` +
       `box-shadow:${style.shadow}; backdrop-filter:blur(1px);` +
-      `opacity:0; transform:translate3d(0,20px,0); pointer-events:none;` +
+      `opacity:0; transform:translate3d(0,0,0); pointer-events:none;` +
       // Navattic ships exactly this entrance for everything: fade + 20px rise,
       // 200ms. Arcade removed its scale-in. Exits are shorter than entrances.
       `transition:opacity 200ms cubic-bezier(0,0,0,1), transform 200ms cubic-bezier(0,0,0,1);`;
@@ -95,10 +100,14 @@ export class Balloon {
     }
 
     // Measure with the final text in place, before positioning.
+    //
+    // `offsetWidth`/`offsetHeight` and NOT `getBoundingClientRect`: the rect is
+    // transform-aware, so an enter animation still in flight would report a
+    // scaled or displaced box and corrupt the placement search. The offsets are
+    // layout-box numbers and do not care what the element is doing visually.
     this.#el.style.visibility = "hidden";
-    this.#el.style.opacity = "0";
-    this.#el.style.transform = "translate3d(0,0,0)";
-    const { width: bw, height: bh } = this.#el.getBoundingClientRect();
+    const bw = this.#el.offsetWidth;
+    const bh = this.#el.offsetHeight;
 
     const W = document.documentElement.clientWidth;
     const H = document.documentElement.clientHeight;
@@ -128,14 +137,40 @@ export class Balloon {
     const y = clamp(chosen.y, MARGIN, H - bh - MARGIN);
 
     this.#el.style.visibility = "visible";
-    this.#el.style.left = `${x}px`;
-    this.#el.style.top = `${y}px`;
-    this.#el.style.transform = "translate3d(0,20px,0)";
-    void this.#el.offsetWidth;
-    this.#el.style.opacity = "1";
-    this.#el.style.transform = "translate3d(0,0,0)";
+    this.#moveTo(x, y, () => this.#drawTail(chosen.side, x, y, bw, bh, anchor));
+  }
 
-    this.#drawTail(chosen.side, x, y, bw, bh, anchor);
+  /**
+   * Position the balloon, gliding when it is already on screen.
+   *
+   * Position lives in `transform`, not `left`/`top`, precisely so this can be
+   * animated: a `say()` aimed at a new element used to teleport the balloon
+   * across the frame in one frame, which on a 60fps capture reads as a glitch
+   * rather than a movement.
+   *
+   * The tail is hidden for the duration and redrawn on arrival — a triangle
+   * sliding independently of the box it belongs to looks broken, and it is
+   * cheaper to hide it than to animate a second element in lockstep.
+   */
+  #moveTo(x: number, y: number, onArrive: () => void): void {
+    const el = this.#el;
+    const visible = getComputedStyle(el).opacity !== "0";
+    this.#x = x;
+    this.#y = y;
+    const spec = { visualDurationMs: visible ? 380 : 240, bounce: visible ? 0.08 : 0 };
+
+    if (!visible) {
+      // Enter: rise into place. Set the start state without animating.
+      cancelAnim(el, "transform");
+      el.style.transform = `translate3d(${x}px, ${y + 14}px, 0)`;
+    } else {
+      this.#tail.style.opacity = "0";
+    }
+
+    void springTo(el, "opacity", 1, spec, 300);
+    void springTo(el, "transform", `translate3d(${x}px, ${y}px, 0)`, spec, 500).finished.then(
+      onArrive,
+    );
   }
 
   #dock(where: "docked-bottom-left" | "lower-third"): void {
@@ -143,20 +178,12 @@ export class Balloon {
     const H = document.documentElement.clientHeight;
     this.#el.style.visibility = "visible";
     this.#tail.style.opacity = "0";
-    this.#el.style.transform = "translate3d(0,0,0)";
-    const { width: bw, height: bh } = this.#el.getBoundingClientRect();
+    const bw = this.#el.offsetWidth;
+    const bh = this.#el.offsetHeight;
 
-    if (where === "lower-third") {
-      this.#el.style.left = `${Math.round((W - bw) / 2)}px`;
-      this.#el.style.top = `${Math.round(H * 0.72)}px`;
-    } else {
-      this.#el.style.left = `${MARGIN * 2}px`;
-      this.#el.style.top = `${H - bh - MARGIN * 2}px`;
-    }
-    this.#el.style.transform = "translate3d(0,20px,0)";
-    void this.#el.offsetWidth;
-    this.#el.style.opacity = "1";
-    this.#el.style.transform = "translate3d(0,0,0)";
+    const x = where === "lower-third" ? Math.round((W - bw) / 2) : MARGIN * 2;
+    const y = where === "lower-third" ? Math.round(H * 0.72) : H - bh - MARGIN * 2;
+    this.#moveTo(x, y, () => {});
   }
 
   /**
@@ -176,27 +203,49 @@ export class Balloon {
     if ((side === "bottom" || side === "top") && !reachableX) return void (t.style.opacity = "0");
     if ((side === "left" || side === "right") && !reachableY) return void (t.style.opacity = "0");
 
+    // Explicit property writes, never `cssText +=`. Appending grew the
+    // declaration on every single `say()` — after a twenty-step demo the tail
+    // carried twenty stale copies of every border rule, and the winner was
+    // whichever happened to be last.
     const border = `${TAIL}px solid transparent`;
+    const set = (
+      left: number,
+      top: number,
+      borders: Partial<Record<"borderLeft" | "borderRight" | "borderTop" | "borderBottom", string>>,
+    ): void => {
+      t.style.left = `${left}px`;
+      t.style.top = `${top}px`;
+      t.style.borderLeft = borders.borderLeft ?? "0";
+      t.style.borderRight = borders.borderRight ?? "0";
+      t.style.borderTop = borders.borderTop ?? "0";
+      t.style.borderBottom = borders.borderBottom ?? "0";
+    };
+
+    const solid = `${TAIL}px solid ${c}`;
     if (side === "bottom") {
-      t.style.cssText += `;left:${ax - TAIL}px; top:${by - TAIL}px;` +
-        `border-left:${border}; border-right:${border}; border-bottom:${TAIL}px solid ${c}; border-top:0;`;
+      set(ax - TAIL, by - TAIL, { borderLeft: border, borderRight: border, borderBottom: solid });
     } else if (side === "top") {
-      t.style.cssText += `;left:${ax - TAIL}px; top:${by + bh}px;` +
-        `border-left:${border}; border-right:${border}; border-top:${TAIL}px solid ${c}; border-bottom:0;`;
+      set(ax - TAIL, by + bh, { borderLeft: border, borderRight: border, borderTop: solid });
     } else if (side === "right") {
-      t.style.cssText += `;left:${bx - TAIL}px; top:${ay - TAIL}px;` +
-        `border-top:${border}; border-bottom:${border}; border-right:${TAIL}px solid ${c}; border-left:0;`;
+      set(bx - TAIL, ay - TAIL, { borderTop: border, borderBottom: border, borderRight: solid });
     } else {
-      t.style.cssText += `;left:${bx + bw}px; top:${ay - TAIL}px;` +
-        `border-top:${border}; border-bottom:${border}; border-left:${TAIL}px solid ${c}; border-right:0;`;
+      set(bx + bw, ay - TAIL, { borderTop: border, borderBottom: border, borderLeft: solid });
     }
     t.style.opacity = "1";
   }
 
+  /**
+   * Fade out where it stands.
+   *
+   * Deliberately NOT a reset to the origin: position lives in `transform` now,
+   * so resetting it would send the balloon flying to the top-left corner as it
+   * faded — a very visible artifact at the end of every step.
+   */
   hide(): void {
-    this.#el.style.opacity = "0";
-    this.#el.style.transform = "translate3d(0,20px,0)";
+    const spec = { visualDurationMs: 180, bounce: 0 };
     this.#tail.style.opacity = "0";
+    void springTo(this.#el, "opacity", 0, spec, 240);
+    void springTo(this.#el, "transform", `translate3d(${this.#x}px, ${this.#y + 10}px, 0)`, spec, 240);
   }
 }
 

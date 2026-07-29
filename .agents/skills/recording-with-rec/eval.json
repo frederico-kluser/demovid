@@ -14,25 +14,25 @@
   "claims": [
     {
       "assert": "code-contains",
-      "path": "src/rec.ts",
+      "path": "src/recorder/index.ts",
       "needle": "SIGUSR2",
       "why": "the SIGNAL ACTUALLY SENT, not the comment describing it. file-contains stayed green through a simulated refactor because the token survived in prose"
     },
     {
       "assert": "code-contains",
-      "path": "src/rec.ts",
+      "path": "src/recorder/index.ts",
       "needle": "signalCode === null",
       "why": "the liveness predicate that replaced the lying child.killed"
     },
     {
       "assert": "code-lacks",
-      "path": "src/rec.ts",
+      "path": "src/recorder/index.ts",
       "needle": "!this.#child.killed",
       "why": "the USAGE form. The bare token also appears in the comment explaining why not to use it, so a needle that broad is a false-positive generator"
     },
     {
       "assert": "code-contains",
-      "path": "src/rec.ts",
+      "path": "src/recorder/index.ts",
       "needle": "async dispose()",
       "why": "unconditional cleanup is what prevents orphaned recorders"
     },
@@ -52,6 +52,24 @@
       "assert": "npm-script",
       "name": "test:record",
       "why": "declared verification signal"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/recorder/backend-ffmpeg.ts",
+      "needle": "crop=trunc(iw/2)*2:trunc(ih/2)*2",
+      "why": "libx264 recusa dimensão ímpar e deixa MP4 sem moov atom — janela de browser é rotineiramente ímpar"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/recorder/session-env.ts",
+      "needle": "lastIndexOf(\")\")",
+      "why": "o campo 2 de /proc/<pid>/stat é o nome do processo entre parênteses e pode conter parênteses; split ingênuo desalinha todos os campos seguintes"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/record.ts",
+      "needle": "kind: \"window\"",
+      "why": "captura por região grava o que estiver na frente — uma tomada de teste saiu com as conversas privadas do operador"
     }
   ]
 }

@@ -7,7 +7,7 @@
  *
  *   node --import tsx test/stage.e2e.mjs
  */
-import { chromium } from "playwright";
+import { chromium } from "playwright-core";
 import assert from "node:assert/strict";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -163,6 +163,83 @@ try {
   const afterModal = await page.evaluate(() => window.__demovid.assertUnscaled());
   await check("repromote() sobrevive a um popover do próprio app", () => {
     assert.ok(afterModal.ok, afterModal.detail);
+  });
+
+  // ── a partir daqui: o que o motion em runtime introduziu de novo ──────────
+
+  const SPRING = { stiffness: 200, damping: 40, mass: 2.25 };
+
+  // Uma animação viva no palco mantém a camada promovida, e é ISSO que fixa a
+  // escala de raster e deixa texto magnificado borrado para sempre. Nenhuma
+  // asserção de pixel enxerga isso; contar animações enxerga.
+  const camTo = await page.evaluate(async (s) => {
+    const cam = window.__demovid.cameraFor("#alvo", 1.6);
+    const p = window.__demovid.cameraTo(cam, s, 900);
+    await new Promise((r) => setTimeout(r, 120));
+    const midFlight = window.__demovid.assertUnscaled();
+    const animatingMid = window.__demovid.stageAnimationCount();
+    await p;
+    await new Promise((r) => setTimeout(r, 60));
+    return { midFlight, animatingMid, animatingAfter: window.__demovid.stageAnimationCount() };
+  }, SPRING);
+
+  await check("em pleno voo da câmera, o overlay continua 1:1", () => {
+    assert.ok(camTo.midFlight.ok, camTo.midFlight.detail);
+  });
+  await check("cameraTo realmente anima (não é um salto disfarçado)", () => {
+    assert.ok(camTo.animatingMid > 0, "nenhuma animação viva no meio do movimento");
+  });
+  await check("depois de assentar, o palco não tem animação parada em cima", () => {
+    // Proxy direto da regressão de borrão permanente.
+    assert.equal(camTo.animatingAfter, 0, `${camTo.animatingAfter} animação(ões) estacionadas no palco`);
+  });
+
+  // A armadilha da promise: o mini cancela a animação anterior sem disparar
+  // `onfinish`, então a promise dela nunca resolveria — e o driver Node, que
+  // espera `cursorTo` por page.evaluate, penduraria até o timeout do Playwright.
+  const interrupted = await page.evaluate(async () => {
+    window.__demovid.showCursor();
+    window.__demovid.cursorPlace(100, 100);
+    const t0 = performance.now();
+    const first = window.__demovid.cursorTo(900, 600, 40);
+    await new Promise((r) => setTimeout(r, 80));
+    const second = window.__demovid.cursorTo(300, 200, 40);
+    await Promise.all([first, second]);
+    return { ms: performance.now() - t0 };
+  });
+  await check("dois cursorTo em sequência: AMBAS as promises resolvem", () => {
+    assert.ok(interrupted.ms < 4000, `demorou ${Math.round(interrupted.ms)}ms — cheira a promise pendurada`);
+  });
+
+  // Trava de regressão do bug real: `setStageZoom` escrevia a contra-escala e o
+  // `moveTo` seguinte a destruía, porque os dois disputavam o mesmo `transform`.
+  const counter = await page.evaluate(async (s) => {
+    const cam = window.__demovid.cameraFor("#alvo", 1.6);
+    await window.__demovid.cameraTo(cam, s, 900);
+    window.__demovid.cursorZoom(1.6);
+    await new Promise((r) => setTimeout(r, 500));
+    const beforeMove = window.__demovid.shadow.querySelector(".demovid-cursor-zoom");
+    const before = getComputedStyle(beforeMove).transform;
+    await window.__demovid.cursorTo(500, 400, 40);
+    await new Promise((r) => setTimeout(r, 120));
+    const after = getComputedStyle(beforeMove).transform;
+    const scaleOf = (t) => (t && t !== "none" ? new DOMMatrixReadOnly(t).a : 1);
+    return { before: scaleOf(before), after: scaleOf(after) };
+  }, SPRING);
+
+  await check("cursorZoom aplica contra-escala de 1/√k", () => {
+    const expected = 1 / Math.sqrt(1.6);
+    assert.ok(
+      Math.abs(counter.before - expected) < 0.03,
+      `contra-escala ${counter.before.toFixed(3)}, esperado ${expected.toFixed(3)}`,
+    );
+  });
+  await check("e um cursorTo depois NÃO a destrói", () => {
+    assert.ok(
+      Math.abs(counter.after - counter.before) < 0.02,
+      `a contra-escala foi de ${counter.before.toFixed(3)} para ${counter.after.toFixed(3)} — ` +
+        `é exatamente o bug de os canais de transform se atropelarem`,
+    );
   });
 } finally {
   await ctx.close();

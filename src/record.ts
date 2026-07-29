@@ -16,16 +16,21 @@
  * some apps ignore untrusted ones. The synthetic cursor is only ever the visual
  * half — it draws where the real, trusted click is about to land.
  */
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { Locator, Page } from "playwright";
+import type { Locator, Page } from "playwright-core";
 import "./overlay-api.js"; // traz a declaração de `window.__demovid`
-import { launchBrowser, type LaunchedBrowser } from "./browser.js";
+import { chromeHeightPx, launchBrowser, setContentSize, type LaunchedBrowser } from "./browser.js";
+import { installEmulation } from "./emulate.js";
 import { synthesize, type Clip } from "./openai/tts.js";
+import { finalizeVideo, probeVideo, type VideoInfo } from "./postprocess.js";
 import { applyLocale, dwellFor, LOCALES, PRESETS, type Preset } from "./presets/index.js";
 import { startRecording, type Recording } from "./rec.js";
+import type { CapturePlan } from "./resolution.js";
 import { splitSentences } from "./openai/tts.js";
 import type { Step, Storyboard } from "./storyboard.js";
+import { buildTimeline, timelinePathFor, TimelineRecorder, writeTimeline } from "./timeline.js";
+import { parkPointer, windowGeometry } from "./x11.js";
 
 /** Clips are served to the page from disk over an intercepted virtual origin. */
 const CLIP_ORIGIN = "https://demovid.invalid";
@@ -53,7 +58,19 @@ export interface RecordOptions {
   height?: number;
   x?: number;
   y?: number;
-  /** Skip `rec` entirely — drives the browser and reports, records nothing. */
+  /**
+   * Resolution, density and emulation. Overrides `width`/`height`/`x`/`y`.
+   * Built by `planCapture` in `src/resolution.ts`, which is the only place that
+   * knows whether the requested format physically fits on this screen.
+   */
+  capture?: CapturePlan;
+  /**
+   * Whether the browser's own UI belongs in the video. `auto` crops it only
+   * when emulating a phone, where a desktop tab strip around a 390px viewport
+   * reads as a mistake.
+   */
+  chrome?: "keep" | "crop" | "auto";
+  /** Skip the recorder entirely — drives the browser and reports, records nothing. */
   rehearse?: boolean;
   onLog?: (line: string) => void;
 }
@@ -64,6 +81,10 @@ export interface RecordReport {
   steps: StepReport[];
   cameraRung: "R1" | "R3";
   warnings: string[];
+  /** What the file actually is, probed after any post-processing. */
+  video?: VideoInfo;
+  /** Path of the `.timeline.json` written beside the video. */
+  timeline?: string;
 }
 
 export interface StepReport {
@@ -73,6 +94,9 @@ export interface StepReport {
   ok: boolean;
   detail?: string;
   ms: number;
+  /** Wall clock, for the timeline. */
+  startedAtMs: number;
+  endedAtMs: number;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, Math.max(0, ms)));
@@ -146,17 +170,117 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
   }
 
   // ── 2. browser ────────────────────────────────────────────────────────────
+  const plan = opts.capture;
+  for (const w of plan?.warnings ?? []) {
+    warnings.push(w);
+    log(`aviso: ${w}`);
+  }
+
   const browser = await launchBrowser({
-    width: opts.width ?? 1600,
-    height: opts.height ?? 1000,
-    ...(opts.x !== undefined ? { x: opts.x } : {}),
-    ...(opts.y !== undefined ? { y: opts.y } : {}),
+    width: plan?.window.w ?? opts.width ?? 1600,
+    height: plan?.window.h ?? opts.height ?? 1000,
+    ...(plan ? { x: plan.window.x } : opts.x !== undefined ? { x: opts.x } : {}),
+    ...(plan ? { y: plan.window.y } : opts.y !== undefined ? { y: opts.y } : {}),
+    ...(plan ? { deviceScaleFactor: plan.deviceScaleFactor } : {}),
   });
   await serveClips(browser, clips);
+
+  // ── 2b. geometria real, medida antes de navegar ───────────────────────────
+  //
+  // Measured on the blank page, because the emulated viewport has to be in
+  // place BEFORE the app loads — an app that boots at desktop width and is then
+  // told it is a phone is a different app.
+  //
+  // The window is measured rather than assumed: Chromium clamps sizes it
+  // dislikes, and the recorder captures what the window manager actually
+  // produced, not what was requested.
+  const dsfPlan = plan?.deviceScaleFactor ?? 1;
+  let chromePx = await chromeHeightPx(browser.page, dsfPlan).catch(() => 0);
+
+  // Removing the browser's own UI costs a re-encode, and that is the cheaper
+  // half of the trade.
+  //
+  // The tempting alternative — capturing a screen REGION instead of the window
+  // — was built, measured, and removed. Region capture reads the framebuffer,
+  // so it records whatever is stacked above the browser: a test take came out
+  // containing the operator's chat client, private conversations and all.
+  // Raising the window first does not fix it, because any window can take the
+  // foreground mid-recording. Window capture reads the window's own buffer and
+  // is structurally immune to that, which makes this a safety property rather
+  // than a quality one. demovid captures windows. Always.
+  //
+  // `auto` drops it. Everything the browser decides to draw up there lands in
+  // that same band — the "unsupported command-line flag" warning, a privacy
+  // notice, a translate bubble — and no combination of flags reliably silences
+  // them. One deterministic crop removes the whole class. `keep` is there for
+  // when the true single pass matters more than the frame.
+  const chromeMode = opts.chrome ?? "auto";
+  const dropChrome = chromeMode !== "keep";
+
+  if (dropChrome && plan && !plan.mobile) {
+    // Make the content area exactly the requested resolution, so the region
+    // needs no scaling either.
+    //
+    // Iterated, because the browser's UI height is not stable across the
+    // resize: measured, a first pass landed 20px short because an infobar the
+    // browser decided to show appeared between the measurement and the resize.
+    // Two passes converge; the third is insurance.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await setContentSize(browser.page, plan.target.w, plan.target.h, dsfPlan).catch(() => {});
+      await sleep(280);
+      chromePx = await chromeHeightPx(browser.page, dsfPlan).catch(() => chromePx);
+      const g = await windowGeometry(browser.windowId);
+      if (!g) break;
+      if (Math.abs(g.h - chromePx - plan.target.h) <= 2) break;
+    }
+  }
+
+  const actual = (await windowGeometry(browser.windowId)) ?? {
+    x: 0,
+    y: 0,
+    w: plan?.window.w ?? opts.width ?? 1600,
+    h: plan?.window.h ?? opts.height ?? 1000,
+  };
+
+  /** Rectangle to keep, relative to the captured window. Applied in post. */
+  let cropRect: { w: number; h: number; x: number; y: number } | null = null;
+
+  if (plan?.mobile) {
+    const dsf = plan.deviceScaleFactor;
+    const cssWidth = plan.cssWidth ?? plan.target.w;
+    const aspect = plan.target.h / plan.target.w;
+    const contentH = actual.h - chromePx;
+
+    // The footprint is `cssWidth * launch dsf`; the override's own
+    // deviceScaleFactor only sets what the page reports. See src/resolution.ts.
+    const vpW = even(Math.min(cssWidth * dsf, actual.w));
+    const vpH = even(Math.min(vpW * aspect, contentH));
+    const cssHeight = Math.round(vpH / dsf);
+
+    await installEmulation(
+      browser.ctx,
+      { mobile: true },
+      { cssWidth, cssHeight, deviceScaleFactor: dsf },
+    );
+    cropRect = { x: 0, y: chromePx, w: vpW, h: vpH };
+    log(
+      `celular: viewport ${cssWidth}x${cssHeight} CSS @${dsf}x → ${vpW}x${vpH} px, ` +
+        `recortado da janela a partir de y=${chromePx}`,
+    );
+    if (vpH < vpW * aspect - 2) {
+      const w = `a janela não coube na proporção pedida — o vídeo sai com barras pretas em vez de esticado`;
+      warnings.push(w);
+      log(`aviso: ${w}`);
+    }
+  } else if (dropChrome && chromePx > 0 && chromePx < actual.h) {
+    cropRect = { x: 0, y: chromePx, w: even(actual.w), h: even(actual.h - chromePx) };
+    log(`sem a barra do browser: recorte ${cropRect.w}x${cropRect.h} a partir de y=${chromePx}`);
+  }
 
   let recording: Recording | null = null;
   const steps: StepReport[] = [];
   let cameraRung: "R1" | "R3" = "R1";
+  const tl = new TimelineRecorder();
 
   // Uma morte do browser aparecia como "Target page … has been closed" no passo
   // SEGUINTE, fazendo depurar o passo errado. Registrar a causa quando ela
@@ -196,35 +320,59 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
     await page.evaluate(() => window.__demovid!.cursorPlace(window.innerWidth / 2, window.innerHeight * 0.75));
 
     // ── 3. gravação ─────────────────────────────────────────────────────────
+    // Get the physical pointer out of the frame before the first frame exists:
+    // Playwright never moves it, so it sits wherever the operator left it, and
+    // over the tab strip it makes Chromium draw a hover card mid-take.
+    await parkPointer(actual);
+    await sleep(150);
+
     if (!opts.rehearse) {
       recording = await startRecording({
+        // Always the window, never a screen region. See the note above.
         target: { kind: "window", windowId: browser.windowId },
         output: opts.output,
         audio: "system",
         fps: 60,
+        // The exact anchor between this process's clock and the video's t=0.
+        firstFrameTs: true,
         onLine: (l) => {
           if (BENIGN_REC_NOISE.some((re) => re.test(l))) return;
           if (/error|failed|warning/i.test(l)) log(`rec: ${l}`);
         },
       });
       log(`gravando janela ${browser.windowId} → ${opts.output}`);
+      const leadIn = tl.mark("lead-in", { reason: "estabilização do encoder" });
       await sleep(600); // deixa o encoder estabilizar antes do primeiro movimento
+      tl.end(leadIn);
     }
 
     // ── 4. os passos ────────────────────────────────────────────────────────
     for (const [i, step] of sb.steps.entries()) {
       const t0 = Date.now();
-      const report: StepReport = { index: i, action: step.action, target: step.target, ok: true, ms: 0 };
+      const report: StepReport = {
+        index: i,
+        action: step.action,
+        target: step.target,
+        ok: true,
+        ms: 0,
+        startedAtMs: t0,
+        endedAtMs: t0,
+      };
+      const stepEvent = tl.mark("step-start", { action: step.action, target: step.target }, i);
       try {
         if (died) throw new Error(`o browser morreu antes deste passo: ${died}`);
-        await runStep(page, step, preset, clipsByStep[i] ?? [], cameraRung, log);
+        await runStep(page, step, preset, clipsByStep[i] ?? [], cameraRung, log, tl, i);
       } catch (err) {
         report.ok = false;
         report.detail = (err as Error).message;
         warnings.push(`passo ${i} (${step.action}): ${report.detail}`);
         log(`passo ${i} FALHOU: ${report.detail}`);
+        tl.mark("error", { message: report.detail }, i);
       }
+      tl.end(stepEvent);
+      tl.mark("step-end", { ok: report.ok }, i);
       report.ms = Date.now() - t0;
+      report.endedAtMs = Date.now();
       steps.push(report);
       await sleep(preset.pacing.gapMs);
     }
@@ -232,23 +380,65 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
     // Land the camera and clear the overlay before the final frames, so the
     // video does not end mid-zoom with a balloon still up.
     if (!died) {
+      const leadOut = tl.mark("lead-out", { reason: "câmera volta à identidade, overlay limpo" });
       await page
-        .evaluate(() => {
+        .evaluate(async (s) => {
           window.__demovid!.hush();
           window.__demovid!.spotlightOff();
-          window.__demovid!.setCamera({ tx: 0, ty: 0, k: 1 });
           window.__demovid!.cursorZoom(1);
-        })
+          await window.__demovid!.cameraTo({ tx: 0, ty: 0, k: 1 }, s as never, 900);
+        }, springConstants(preset))
         .catch(() => {});
-      await sleep(900);
+      await sleep(500);
+      tl.end(leadOut);
     }
 
     if (died) warnings.push(`o browser morreu durante a gravação: ${died}`);
 
     if (recording) {
-      const stopped = await recording.stop();
+      const rec = recording;
+      const stopped = await rec.stop();
       recording = null;
-      return { output: stopped.output, bytes: stopped.bytes, steps, cameraRung, warnings };
+
+      // Read before finalizing: the sidecar is deleted as it is consumed, and
+      // the post-processing pass renames the video out from under it.
+      const firstFrame = await rec.readFirstFrameTs().catch(() => null);
+      const finished = await finalizeCapture(stopped.output, plan, cropRect, log);
+      for (const w of finished.warnings) warnings.push(w);
+
+      const timelinePath = timelinePathFor(stopped.output);
+      const timeline = buildTimeline({
+        outputPath: stopped.output,
+        video: finished.info,
+        backend: rec.backend,
+        scaled: plan?.scaleNeeded ?? false,
+        storyboard: { title: sb.title, url: sb.url, locale: sb.locale, preset: sb.preset },
+        cameraRung,
+        clock: {
+          stoppedAtMs: rec.stoppedAtMs,
+          startedAtMs: rec.startedAtMs,
+          durationMs: finished.info.durationMs,
+          firstFrameRealtimeUs: firstFrame?.realtimeUs ?? null,
+        },
+        recorder: tl,
+        steps,
+        warnings,
+      });
+      await writeTimeline(timelinePath, timeline);
+      log(
+        `timeline: ${timelinePath} (relógio ${timeline.clock.method}, ±${timeline.clock.residualMs}ms, ` +
+          `${timeline.cuts.length} ponto(s) de corte)`,
+      );
+
+      return {
+        output: stopped.output,
+        bytes: finished.bytes,
+        steps,
+        cameraRung,
+        warnings,
+        video: finished.info,
+        timeline: timelinePath,
+      };
     }
     return { output: null, bytes: 0, steps, cameraRung, warnings };
   } finally {
@@ -259,6 +449,100 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
   }
 }
 
+/** Encoders reject odd dimensions; crop geometry must land on even numbers. */
+const even = (n: number): number => Math.max(2, Math.floor(n / 2) * 2);
+
+/**
+ * The camera spring, as physical constants for the overlay to rebuild.
+ *
+ * The baked `linear()` easing is a frozen sample of this spring: fine for a
+ * transition that runs start to finish, useless for one that has to resume from
+ * an interruption. The overlay needs the spring itself.
+ */
+function springConstants(preset: Preset): { stiffness: number; damping: number; mass: number } {
+  const s = preset.camera.spring;
+  return { stiffness: s.stiffness, damping: s.damping, mass: s.mass };
+}
+
+/**
+ * Largest rectangle with `target`'s aspect ratio that fits in `w x h`.
+ *
+ * This is where the phone-shaped video actually gets its shape: the window is
+ * whatever Chromium would give us, and this carves the 9:16 (or 3:4, or
+ * whatever was asked for) region out of it.
+ */
+export function fitViewport(
+  w: number,
+  h: number,
+  target: { w: number; h: number },
+): { w: number; h: number } {
+  const aspect = target.w / target.h;
+  let vw = h * aspect;
+  let vh = h;
+  if (vw > w) {
+    vw = w;
+    vh = w / aspect;
+  }
+  return { w: even(vw), h: even(vh) };
+}
+
+/**
+ * Turn the raw capture into the file that was asked for.
+ *
+ * Does nothing at all in the common case — a landscape format that fits on
+ * screen is already correct the moment the recorder stops, and that is the
+ * whole point of the one-pass design. Work happens only when the browser's own
+ * UI has to come off, or when the requested resolution was physically
+ * impossible to capture and has to be scaled up.
+ *
+ * Cropping the browser UI changes the aspect ratio, so what remains is
+ * centre-cropped back to the target's aspect before scaling. Skipping that step
+ * would stretch the app vertically — subtly enough to ship, obviously enough to
+ * look wrong.
+ */
+async function finalizeCapture(
+  path: string,
+  plan: CapturePlan | undefined,
+  cropRect: { w: number; h: number; x: number; y: number } | null,
+  log: (s: string) => void,
+): Promise<{ bytes: number; info: VideoInfo; warnings: string[] }> {
+  const warnings: string[] = [];
+  const before = await probeVideo(path);
+
+  // The crop was decided while the browser was alive, against the window's real
+  // geometry. Re-deriving it from the file would only re-guess what was already
+  // measured — but it must still be checked against what actually got captured.
+  let crop = cropRect;
+  if (crop && (crop.x + crop.w > before.width || crop.y + crop.h > before.height)) {
+    warnings.push(
+      `o recorte planejado (${crop.w}x${crop.h}+${crop.x}+${crop.y}) não cabe no vídeo ` +
+        `de ${before.width}x${before.height} — saindo sem recortar`,
+    );
+    crop = null;
+  }
+
+  const w = crop?.w ?? before.width;
+  const h = crop?.h ?? before.height;
+  const needScale = plan !== undefined && (w !== plan.target.w || h !== plan.target.h);
+
+  const info =
+    crop || needScale
+      ? (
+          await finalizeVideo(path, {
+            ...(crop ? { crop } : {}),
+            ...(needScale && plan ? { scale: { w: plan.target.w, h: plan.target.h } } : {}),
+            // Letterbox rather than distort: the crop's aspect can be a pixel
+            // or two off the target once everything has been rounded to even.
+            ...(plan?.mobile ? { pad: true } : {}),
+            onLog: log,
+          })
+        ).info
+      : before;
+
+  const st = await stat(path).catch(() => null);
+  return { bytes: st?.size ?? 0, info, warnings };
+}
+
 /** One step: aim, narrate, act. */
 async function runStep(
   page: Page,
@@ -267,6 +551,8 @@ async function runStep(
   clips: Clip[],
   rung: "R1" | "R3",
   log: (s: string) => void,
+  tl: TimelineRecorder,
+  index: number,
 ): Promise<void> {
   // ── aim ──────────────────────────────────────────────────────────────────
   if (step.target) {
@@ -284,32 +570,40 @@ async function runStep(
         [step.target, zoom] as const,
       );
       if (cam) {
+        const move = tl.mark("camera-move", { to: cam, selector: step.target, zoom }, index);
+        // The overlay owns the animation now. Writing `stage.style.transition`
+        // from here left that string parked on the element forever, so the
+        // final reset to identity either transitioned or snapped depending on
+        // whether the last step had zoomed — the ending was not deterministic.
         await page.evaluate(
-          ([c, dur, ease]) => {
-            const st = document.getElementById("__demovid_stage");
-            if (st) st.style.transition = `transform ${dur as number}ms ${ease as string}`;
-            window.__demovid!.setCamera(c as never);
+          ([c, s, hint]) => {
             window.__demovid!.cursorZoom((c as { k: number }).k);
+            return window.__demovid!.cameraTo(c as never, s as never, hint as number);
           },
-          [cam, preset.camera.spring.durationMs, preset.camera.spring.easing] as const,
+          [cam, springConstants(preset), preset.camera.spring.perceivedMs] as const,
         );
-        // Hold until the spring has visually settled, plus the compositor's
-        // re-raster window — text is soft mid-move and crisp once it lands.
-        await sleep(preset.camera.spring.perceivedMs + 180);
+        // Hold for the compositor's re-raster window only — the promise above
+        // already covers the movement. Text is soft mid-move, crisp once landed.
+        await sleep(preset.camera.rasterHoldMs ?? 180);
+        tl.end(move);
       }
     }
 
     await page.evaluate((sel) => window.__demovid!.spotlightOn(sel), step.target);
+    tl.mark("spotlight-on", { selector: step.target }, index);
 
     const box = await page.evaluate((sel) => window.__demovid!.rectOf(sel), step.target);
     if (box) {
+      const travel = tl.mark("cursor-travel", { to: { x: box.x + box.w / 2, y: box.y + box.h / 2 } }, index);
       await page.evaluate(
         ([x, y, w]) => window.__demovid!.cursorTo(x as number, y as number, w as number),
         [box.x + box.w / 2, box.y + box.h / 2, Math.min(box.w, box.h)] as const,
       );
+      tl.end(travel);
     }
   } else {
     await page.evaluate(() => window.__demovid!.spotlightOff());
+    tl.mark("spotlight-off", undefined, index);
   }
 
   // ── narrate ──────────────────────────────────────────────────────────────
@@ -318,25 +612,49 @@ async function runStep(
       ([text, sel]) => window.__demovid!.say(text as string, (sel as string | undefined) ?? undefined),
       [step.say, step.target] as const,
     );
+    tl.mark("balloon-show", { text: step.say }, index);
   }
 
   let audioMs = 0;
   for (const [ci, clip] of clips.entries()) {
     const ref = { src: `${CLIP_ORIGIN}/${clip.id}.mp3`, durationMs: Math.round(clip.durationS * 1000), text: clip.text };
     await page.evaluate((c) => window.__demovid!.preloadClip(c as never), ref as never);
+
+    // Observed, not predicted. The span brackets the actual `play()`→`onended`
+    // round trip, which is what `measured: true` in the timeline claims.
+    const startedAt = Date.now();
     const outcome = await page.evaluate(
       ([c, idx]) => window.__demovid!.playClip(c as never, idx as number),
       [ref, ci] as const,
     );
+    const endedAt = Date.now();
+
+    tl.span("clip-start", startedAt, endedAt, { id: clip.id, text: clip.text, outcome }, index);
+    tl.narrate({
+      id: clip.id,
+      stepIndex: index,
+      sentenceIndex: ci,
+      text: clip.text,
+      startMs: startedAt,
+      endMs: endedAt,
+      measured: outcome === "ended",
+    });
+
     if (outcome !== "ended") log(`áudio ${clip.id} terminou como "${outcome}"`);
     audioMs += ref.durationMs;
   }
 
   // ── act ──────────────────────────────────────────────────────────────────
   // Trusted events, always. The synthetic cursor already drew where this lands.
+  const act = tl.mark(
+    step.action === "goto" ? "navigate" : (step.action as never),
+    { target: step.target, value: step.value },
+    index,
+  );
   switch (step.action) {
     case "click": {
       await page.evaluate(() => window.__demovid!.cursorClick());
+      tl.mark("cursor-click", { target: step.target }, index);
       await locatorFor(page, step.target!).click({ timeout: 10_000 });
       break;
     }
@@ -365,9 +683,16 @@ async function runStep(
       break;
     }
   }
+  tl.end(act);
 
   // ── dwell ────────────────────────────────────────────────────────────────
   const dwell = dwellFor(preset, audioMs, step.say ?? "");
-  await sleep(Math.max(0, dwell - audioMs) + (step.holdMs ?? 0));
+  const holdMs = Math.max(0, dwell - audioMs) + (step.holdMs ?? 0);
+  if (holdMs > 0) {
+    const wait = tl.mark("dwell", { reason: step.holdMs ? "holdMs" : "ritmo do preset", holdMs }, index);
+    await sleep(holdMs);
+    tl.end(wait);
+  }
   await page.evaluate(() => window.__demovid!.hush());
+  tl.mark("balloon-hide", undefined, index);
 }

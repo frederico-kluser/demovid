@@ -39,7 +39,7 @@ Explains why demovid validates a storyboard with a hand-written JSON Schema AND 
 
 ### `recording-with-rec`
 
-Carries the process and signal semantics of the `rec` recorder child and the Brave launch that feeds it, including a Node API that actively misreports whether the recorder is alive. Use whenever you touch src/rec.ts or src/browser.ts, start or stop a recording, add pause behaviour, debug a truncated MP4, a recorder left capturing after the process exits, a browser that closes mid-run, or a window id that resolves to the wrong window. Assume the obvious implementation is wrong here — each rule below replaced one that looked correct.
+Carries the process and signal semantics of the recorder child, the two backends and how they differ, and the Node API that actively misreports whether the recorder is alive. Use whenever you touch src/recorder/**, src/record.ts or src/browser.ts, start or stop a recording, add pause behaviour, debug a truncated MP4, a recorder left capturing after the process exits, a browser that closes mid-run, or a window id that resolves to the wrong window. Assume the obvious implementation is wrong here — each rule below replaced one that looked correct.
 
 *Verified by:* `npm run test:record`
 
