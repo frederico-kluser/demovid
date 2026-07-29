@@ -13,19 +13,19 @@
   },
   "claims": [
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/index.ts",
       "needle": "rehearse",
       "why": "the rehearsal step the procedure depends on"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/index.ts",
       "needle": "doctor",
       "why": "step 1 of the documented procedure and the declared signal"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/doctor.ts",
       "needle": "--deep",
       "why": "the only check that distinguishes a valid key from a funded one"

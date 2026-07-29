@@ -12,13 +12,13 @@
   },
   "claims": [
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/exec.ts",
       "needle": "execFile",
       "why": "the no-shell rule rests on run() using execFile"
     },
     {
-      "assert": "file-lacks",
+      "assert": "code-lacks",
       "path": "src/exec.ts",
       "needle": "shell: true",
       "why": "a shell would silently reopen the injection hole the rule closes"

@@ -13,37 +13,37 @@
   },
   "claims": [
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/openai/tts.ts",
       "needle": "WPM_CEILING = 140",
       "why": "the ceiling above which speed is the only working lever"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/openai/tts.ts",
       "needle": "areverse",
       "why": "the trim sandwich; silenceremove only trims the head"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/openai/tts.ts",
       "needle": "insufficient_quota",
       "why": "billing state must be thrown immediately, never retried"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/openai/tts.ts",
       "needle": "ABBREV",
       "why": "the guard that stops 'O Dr. Silva' splitting mid-name"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "scripts/bake-springs.ts",
       "needle": "keyframes: [0, 1]",
       "why": "spring() throws without it when given physical constants"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "scripts/bake-springs.ts",
       "needle": "perceivedMs",
       "why": "the pacing duration, distinct from the simulation duration"

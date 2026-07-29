@@ -22,19 +22,19 @@
       "why": "the driver/overlay contract is claimed to live under src/"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/overlay-api.ts",
       "needle": "declare global",
       "why": "the whole reason this file sits in src/ is the global declaration"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/presets/types.ts",
       "needle": "CameraRung",
       "why": "the two-axes claim depends on the rung type existing"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/exec.ts",
       "needle": "export async function run",
       "why": "run() is named as the single owner of external binaries"

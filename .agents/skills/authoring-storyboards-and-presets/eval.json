@@ -13,37 +13,37 @@
   },
   "claims": [
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/storyboard.ts",
       "needle": "superRefine",
       "why": "the zod layer that carries every cross-field rule"
     },
     {
-      "assert": "file-lacks",
+      "assert": "code-lacks",
       "path": "src/storyboard.ts",
       "needle": "minLength:",
       "why": "the JSON-Schema KEY form. The bare word also appears in the comment listing what strict:true forbids, so a broader needle fails on its own documentation"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/storyboard.ts",
       "needle": "STORYBOARD_JSON_SCHEMA",
       "why": "the shape guarantee half of the two-schema split"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/presets/index.ts",
       "needle": "export function applyLocale",
       "why": "locale is a separate composable layer, not another preset"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/presets/index.ts",
       "needle": "export function dwellFor",
       "why": "the three-input dwell calculation the skill documents"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "src/presets/locale/pt-BR.ts",
       "needle": "requireHumanListen",
       "why": "the honest record of an unverified accent claim"

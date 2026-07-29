@@ -13,31 +13,31 @@
   },
   "claims": [
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "test/record.e2e.ts",
       "needle": "Promise<void>",
       "why": "check() must accept and await an async callback or it kills the process before cleanup"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "test/record.e2e.ts",
       "needle": "await check(",
       "why": "an un-awaited call site reopens the same hole"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "test/stage.e2e.mjs",
       "needle": "await check(",
       "why": "same contract in the other harness"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "test/record.e2e.ts",
       "needle": "mean_volume",
       "why": "asserting audio CONTENT, not merely that a track exists"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "test/record.e2e.ts",
       "needle": "dispose()",
       "why": "unconditional cleanup in finally"

@@ -32,11 +32,11 @@
     {
       "id": 5,
       "name": "validation",
-      "done": false,
-      "gate_passed": false,
+      "done": true,
+      "gate_passed": true,
       "artifact": ".agents/bootstrap/validation-report.md"
     }
   ],
   "stop_blocks": 0,
-  "updated_by": "phase-4-gate"
+  "updated_by": "phase-5-gate"
 }

@@ -13,43 +13,43 @@
   },
   "claims": [
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "overlay/src/stage.ts",
       "needle": "scrollbar-width:none",
       "why": "load-bearing: without it any transform shrinks fixed elements by the scrollbar width"
     },
     {
-      "assert": "file-lacks",
+      "assert": "code-lacks",
       "path": "overlay/src/stage.ts",
       "needle": "will-change:transform",
       "why": "banned on the stage — it pins the raster scale and blurs magnified text permanently"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "overlay/src/stage.ts",
       "needle": "transform-origin:0 0",
       "why": "fixed origin is what lets two camera states chain"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "overlay/src/stage.ts",
       "needle": "moveBefore",
       "why": "atomic move preserves iframe/focus/animation state"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "overlay/src/index.ts",
       "needle": "popover",
       "why": "top-layer isolation from the stage transform"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "overlay/src/index.ts",
       "needle": "showPopover",
       "why": "positive form. \"showModal\" appears in the comment stating we must never call it"
     },
     {
-      "assert": "file-contains",
+      "assert": "code-contains",
       "path": "overlay/src/spotlight.ts",
       "needle": "evenodd",
       "why": "the cut-out technique the skill documents"

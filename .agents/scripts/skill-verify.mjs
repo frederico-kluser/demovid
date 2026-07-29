@@ -52,6 +52,57 @@ const readEval = (name) => {
 };
 
 /**
+ * Strip comments and string literals so a claim about BEHAVIOUR cannot be
+ * satisfied by PROSE.
+ *
+ * Found by the validation suite: replacing `kill("SIGUSR2")` with SIGTERM left
+ * `file-contains "SIGUSR2"` green, because the token still appeared in the
+ * comment documenting the signal. The skill would have kept teaching a
+ * behaviour the code no longer had — the precise failure the claim system
+ * exists to catch, passing straight through it.
+ *
+ * A small state machine rather than a regex, because a regex either misses
+ * `/* *\/` nesting or eats the `//` in `https://`.
+ */
+function stripNonCode(src) {
+  let out = "";
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    const c = src[i];
+    const d = src[i + 1];
+    if (c === "/" && d === "/") {
+      while (i < n && src[i] !== "\n") i++;
+    } else if (c === "/" && d === "*") {
+      i += 2;
+      while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      i += 2;
+    } else if (c === '"' || c === "'" || c === "`") {
+      // Keep the quotes so `kill("SIGUSR2")` still matches, but drop nothing
+      // else: string CONTENT is code here, it is the argument being passed.
+      const q = c;
+      out += c;
+      i++;
+      while (i < n && src[i] !== q) {
+        if (src[i] === "\\") {
+          out += src[i] + (src[i + 1] ?? "");
+          i += 2;
+          continue;
+        }
+        out += src[i];
+        i++;
+      }
+      out += q;
+      i++;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
+/**
  * Claim checks — the staleness detector.
  *
  * Each asserts something the skill states about the repo. When someone
@@ -80,6 +131,18 @@ function checkClaims(name, spec) {
           const p = join(ROOT, c.path);
           ok = existsSync(p) && !readFileSync(p, "utf8").includes(c.needle);
           detail = `${c.path} lacks ${JSON.stringify(c.needle)}`;
+          break;
+        }
+        case "code-contains": {
+          const p = join(ROOT, c.path);
+          ok = existsSync(p) && stripNonCode(readFileSync(p, "utf8")).includes(c.needle);
+          detail = `${c.path} CODE contains ${JSON.stringify(c.needle)}`;
+          break;
+        }
+        case "code-lacks": {
+          const p = join(ROOT, c.path);
+          ok = existsSync(p) && !stripNonCode(readFileSync(p, "utf8")).includes(c.needle);
+          detail = `${c.path} CODE lacks ${JSON.stringify(c.needle)}`;
           break;
         }
         case "npm-script": {
