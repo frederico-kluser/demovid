@@ -1,0 +1,57 @@
+{
+  "routing": {
+    "must_trigger": [
+      "add a new action verb to the storyboard schema",
+      "openai structured outputs returned a 400 on my json schema",
+      "add a locale overlay for a new language preset",
+      "tune the dwell time and pacing of a preset"
+    ],
+    "must_not_trigger": [
+      "the overlay scaled with the page during zoom",
+      "the recorder left a process running"
+    ]
+  },
+  "claims": [
+    {
+      "assert": "file-contains",
+      "path": "src/storyboard.ts",
+      "needle": "superRefine",
+      "why": "the zod layer that carries every cross-field rule"
+    },
+    {
+      "assert": "file-lacks",
+      "path": "src/storyboard.ts",
+      "needle": "minLength:",
+      "why": "the JSON-Schema KEY form. The bare word also appears in the comment listing what strict:true forbids, so a broader needle fails on its own documentation"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/storyboard.ts",
+      "needle": "STORYBOARD_JSON_SCHEMA",
+      "why": "the shape guarantee half of the two-schema split"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/presets/index.ts",
+      "needle": "export function applyLocale",
+      "why": "locale is a separate composable layer, not another preset"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/presets/index.ts",
+      "needle": "export function dwellFor",
+      "why": "the three-input dwell calculation the skill documents"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/presets/locale/pt-BR.ts",
+      "needle": "requireHumanListen",
+      "why": "the honest record of an unverified accent claim"
+    },
+    {
+      "assert": "npm-script",
+      "name": "test",
+      "why": "declared verification signal"
+    }
+  ]
+}

@@ -18,8 +18,8 @@
     {
       "id": 3,
       "name": "generate-knowledge-and-task-skills",
-      "done": false,
-      "gate_passed": false,
+      "done": true,
+      "gate_passed": true,
       "artifact": ".agents/skills/catalog.md"
     },
     {
@@ -38,5 +38,5 @@
     }
   ],
   "stop_blocks": 0,
-  "updated_by": "phase-2-gate"
+  "updated_by": "phase-3-gate"
 }

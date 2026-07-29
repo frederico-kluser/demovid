@@ -1,0 +1,63 @@
+{
+  "routing": {
+    "must_trigger": [
+      "magnified text is blurry when the camera zooms",
+      "the fixed header scrolls away once the stage is transformed",
+      "the balloon overlay scaled together with the page zoom",
+      "change the spotlight cutout radius"
+    ],
+    "must_not_trigger": [
+      "the recorder process is still running after the script exits",
+      "add a new voice preset for narration"
+    ]
+  },
+  "claims": [
+    {
+      "assert": "file-contains",
+      "path": "overlay/src/stage.ts",
+      "needle": "scrollbar-width:none",
+      "why": "load-bearing: without it any transform shrinks fixed elements by the scrollbar width"
+    },
+    {
+      "assert": "file-lacks",
+      "path": "overlay/src/stage.ts",
+      "needle": "will-change:transform",
+      "why": "banned on the stage — it pins the raster scale and blurs magnified text permanently"
+    },
+    {
+      "assert": "file-contains",
+      "path": "overlay/src/stage.ts",
+      "needle": "transform-origin:0 0",
+      "why": "fixed origin is what lets two camera states chain"
+    },
+    {
+      "assert": "file-contains",
+      "path": "overlay/src/stage.ts",
+      "needle": "moveBefore",
+      "why": "atomic move preserves iframe/focus/animation state"
+    },
+    {
+      "assert": "file-contains",
+      "path": "overlay/src/index.ts",
+      "needle": "popover",
+      "why": "top-layer isolation from the stage transform"
+    },
+    {
+      "assert": "file-contains",
+      "path": "overlay/src/index.ts",
+      "needle": "showPopover",
+      "why": "positive form. \"showModal\" appears in the comment stating we must never call it"
+    },
+    {
+      "assert": "file-contains",
+      "path": "overlay/src/spotlight.ts",
+      "needle": "evenodd",
+      "why": "the cut-out technique the skill documents"
+    },
+    {
+      "assert": "npm-script",
+      "name": "test:e2e",
+      "why": "declared verification signal"
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "routing": {
+    "must_trigger": [
+      "add an assertion to the end to end suite",
+      "why does npm test skip the browser tests",
+      "the suite reported green but the process exited without cleanup",
+      "which verification command should I trust for this change"
+    ],
+    "must_not_trigger": [
+      "tune the pt-BR locale pacing factors",
+      "the spotlight cutout radius is wrong"
+    ]
+  },
+  "claims": [
+    {
+      "assert": "file-contains",
+      "path": "test/record.e2e.ts",
+      "needle": "Promise<void>",
+      "why": "check() must accept and await an async callback or it kills the process before cleanup"
+    },
+    {
+      "assert": "file-contains",
+      "path": "test/record.e2e.ts",
+      "needle": "await check(",
+      "why": "an un-awaited call site reopens the same hole"
+    },
+    {
+      "assert": "file-contains",
+      "path": "test/stage.e2e.mjs",
+      "needle": "await check(",
+      "why": "same contract in the other harness"
+    },
+    {
+      "assert": "file-contains",
+      "path": "test/record.e2e.ts",
+      "needle": "mean_volume",
+      "why": "asserting audio CONTENT, not merely that a track exists"
+    },
+    {
+      "assert": "file-contains",
+      "path": "test/record.e2e.ts",
+      "needle": "dispose()",
+      "why": "unconditional cleanup in finally"
+    },
+    {
+      "assert": "npm-script",
+      "name": "verify",
+      "why": "declared verification signal; the only chain that runs both typecheck and build"
+    }
+  ]
+}

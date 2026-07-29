@@ -1,0 +1,57 @@
+{
+  "routing": {
+    "must_trigger": [
+      "the narration has long dead air between sentences",
+      "make the voice speak faster than the instructions allow",
+      "the sentence splitter broke a name in half at an abbreviation",
+      "regenerate the baked spring easings"
+    ],
+    "must_not_trigger": [
+      "the fixed header scrolls away when the stage is transformed",
+      "the recorder was left capturing after a crash"
+    ]
+  },
+  "claims": [
+    {
+      "assert": "file-contains",
+      "path": "src/openai/tts.ts",
+      "needle": "WPM_CEILING = 140",
+      "why": "the ceiling above which speed is the only working lever"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/openai/tts.ts",
+      "needle": "areverse",
+      "why": "the trim sandwich; silenceremove only trims the head"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/openai/tts.ts",
+      "needle": "insufficient_quota",
+      "why": "billing state must be thrown immediately, never retried"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/openai/tts.ts",
+      "needle": "ABBREV",
+      "why": "the guard that stops 'O Dr. Silva' splitting mid-name"
+    },
+    {
+      "assert": "file-contains",
+      "path": "scripts/bake-springs.ts",
+      "needle": "keyframes: [0, 1]",
+      "why": "spring() throws without it when given physical constants"
+    },
+    {
+      "assert": "file-contains",
+      "path": "scripts/bake-springs.ts",
+      "needle": "perceivedMs",
+      "why": "the pacing duration, distinct from the simulation duration"
+    },
+    {
+      "assert": "npm-script",
+      "name": "test",
+      "why": "declared verification signal"
+    }
+  ]
+}

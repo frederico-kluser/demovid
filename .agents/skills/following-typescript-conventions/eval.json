@@ -1,0 +1,50 @@
+{
+  "routing": {
+    "must_trigger": [
+      "how should I spawn an external binary in this typescript repo",
+      "typecheck passes but the build fails on a global declaration",
+      "what error class style does this project use"
+    ],
+    "must_not_trigger": [
+      "the balloon covers the element it describes",
+      "record a demo of my app"
+    ]
+  },
+  "claims": [
+    {
+      "assert": "file-contains",
+      "path": "src/exec.ts",
+      "needle": "execFile",
+      "why": "the no-shell rule rests on run() using execFile"
+    },
+    {
+      "assert": "file-lacks",
+      "path": "src/exec.ts",
+      "needle": "shell: true",
+      "why": "a shell would silently reopen the injection hole the rule closes"
+    },
+    {
+      "assert": "file-contains",
+      "path": "tsconfig.json",
+      "needle": "overlay/src",
+      "why": "the two-config divergence claim requires typecheck to include overlay/src"
+    },
+    {
+      "assert": "file-lacks",
+      "path": "tsconfig.build.json",
+      "needle": "overlay/src",
+      "why": "and requires the build config NOT to include it"
+    },
+    {
+      "assert": "file-contains",
+      "path": "tsconfig.json",
+      "needle": "verbatimModuleSyntax",
+      "why": "listed as tooling-owned, so no prose is spent on import type"
+    },
+    {
+      "assert": "npm-script",
+      "name": "build",
+      "why": "declared verification signal, chosen over typecheck on purpose"
+    }
+  ]
+}

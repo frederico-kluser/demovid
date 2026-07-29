@@ -1,0 +1,57 @@
+{
+  "routing": {
+    "must_trigger": [
+      "the recorder child process stays alive after the script exits",
+      "how do I pause and resume the screen recorder",
+      "the mp4 came out truncated and will not play",
+      "resolve the browser window id for the capture"
+    ],
+    "must_not_trigger": [
+      "magnified text looks blurry during the zoom",
+      "split narration into sentences before calling the api"
+    ]
+  },
+  "claims": [
+    {
+      "assert": "file-contains",
+      "path": "src/rec.ts",
+      "needle": "SIGUSR2",
+      "why": "pause is documented as a SIGUSR2 toggle"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/rec.ts",
+      "needle": "signalCode === null",
+      "why": "the liveness predicate that replaced the lying child.killed"
+    },
+    {
+      "assert": "file-lacks",
+      "path": "src/rec.ts",
+      "needle": "!this.#child.killed",
+      "why": "the USAGE form. The bare token also appears in the comment explaining why not to use it, so a needle that broad is a false-positive generator"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/rec.ts",
+      "needle": "async dispose()",
+      "why": "unconditional cleanup is what prevents orphaned recorders"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/browser.ts",
+      "needle": "reducedMotion",
+      "why": "without no-preference, WAAPI flattens every camera move"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/browser.ts",
+      "needle": "findNewWindow",
+      "why": "positive form: the window is found by diffing the X11 set. Asserting the ABSENCE of \"search --name\" fails on the comment that forbids it"
+    },
+    {
+      "assert": "npm-script",
+      "name": "test:record",
+      "why": "declared verification signal"
+    }
+  ]
+}

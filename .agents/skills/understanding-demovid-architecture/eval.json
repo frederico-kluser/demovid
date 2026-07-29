@@ -1,0 +1,48 @@
+{
+  "routing": {
+    "must_trigger": [
+      "where does this new module belong in demovid architecture",
+      "which layer owns the order of operations",
+      "demovid architecture overview of the layers"
+    ],
+    "must_not_trigger": [
+      "the synthetic cursor jitters while it travels",
+      "add an abbreviation to the sentence splitter"
+    ]
+  },
+  "claims": [
+    {
+      "assert": "file-exists",
+      "path": "src/record.ts",
+      "why": "record.ts is named as the only orchestrator"
+    },
+    {
+      "assert": "file-exists",
+      "path": "src/overlay-api.ts",
+      "why": "the driver/overlay contract is claimed to live under src/"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/overlay-api.ts",
+      "needle": "declare global",
+      "why": "the whole reason this file sits in src/ is the global declaration"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/presets/types.ts",
+      "needle": "CameraRung",
+      "why": "the two-axes claim depends on the rung type existing"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/exec.ts",
+      "needle": "export async function run",
+      "why": "run() is named as the single owner of external binaries"
+    },
+    {
+      "assert": "npm-script",
+      "name": "typecheck",
+      "why": "declared verification signal"
+    }
+  ]
+}
