@@ -14,9 +14,24 @@ Any edit to `src/openai/tts.ts` or `scripts/bake-springs.ts`; any pacing, voice 
 
 ## Injected knowledge
 
-### Three measurements, on 26-word realistic sentences with `gpt-4o-mini-tts`
+### The model is a pinned snapshot, and the alias has already betrayed this file
 
-Recorded at `src/openai/tts.ts:6-22@a394a34`.
+`TTS_MODEL = "gpt-4o-mini-tts-2025-12-15"` (`src/openai/tts.ts:47`), never the bare
+`gpt-4o-mini-tts` alias. `gpt-4o-mini-tts-2025-03-20` was **shut down on 2026-07-23** and the alias
+moved; since `TTS_MODEL` is part of the cache key, a silent retarget serves audio from weights that no
+longer exist. `/v1/audio/speech` accepts exactly four ids — `tts-1`, `tts-1-hd`, the alias, and the
+dated snapshot — so there is no newer TTS family to reach for.
+
+Voices are not a flat list. `ballad verse marin cedar` exist only on `gpt-4o-mini-tts`, and of those
+the docs single out **`marin` and `cedar`** for best quality; the other nine are `tts-1`-era and sound
+like it. Picking one of the nine on a 2025-12 snapshot is a downgrade the API will not warn about.
+
+### Three measurements — taken against the RETIRED March snapshot
+
+Recorded at `src/openai/tts.ts:14-32`. The *shape* of each finding is architectural and still holds;
+the **numbers are not re-verified on `2025-12-15`**, and `WPM_CEILING` is the one most likely to have
+moved. Treat them as calibrated on weights that no longer exist: re-measure before quoting a figure
+back at someone, and delete `.demovid-cache/` first or you will grade yesterday's audio.
 
 **One API call per sentence, not per scene.** Long inputs degrade badly: 10–60 s of silence and
 dropped sentences. Sentence granularity is also what makes the cache useful — editing one line
@@ -55,12 +70,19 @@ normalisation is asymmetric — too loud gets turned down, too quiet stays quiet
 
 ### The cache is the filename
 
-`clipId` is a sha256 of `[MODEL, voice, instructions, speedFor(targetWpm), text]`, first 16 hex chars
-(`src/openai/tts.ts:88-93@a394a34`). There is no index file: **the filename IS the content hash**, so
-"has this changed?" is a `stat`. Nothing can fall out of sync with the directory.
+`clipId` is a sha256 of `[TTS_MODEL, voice, instructions, speedFor(targetWpm), normalize, spokenText]`,
+first 16 hex chars (`src/openai/tts.ts:146`). There is no index file: **the filename IS the content
+hash**, so "has this changed?" is a `stat`. Nothing can fall out of sync with the directory.
 
 Anything that changes the audio must be in that key. Adding a synthesis parameter without adding it
-there produces stale audio that looks cached and is wrong.
+there produces stale audio that looks cached and is wrong — `normalize` was exactly that bug: flipping
+the flag reused the previous flag's file out of a cache that looked like a hit.
+
+The text in the key is `toSpeakable(text)`, not what the human wrote. `src/openai/speakable.ts` turns
+notation into words — `R$`, `%`, `º`, a date's slashes, a time's colon, a decimal comma — and leaves
+bare integers alone on purpose, because the synthesiser reads `1234` correctly while a rule that
+rewrote every digit run would also mangle `CEP 01310-100` and `v4.0.501`. `Clip` keeps both strings:
+`text` for captions and the timeline, `spoken` for the API and the hash.
 
 ### Sentence splitting needs the abbreviation guard
 
@@ -99,8 +121,9 @@ strings, so the injected overlay ships **zero animation JS**
 3. If synthesis parameters changed, delete `.demovid-cache/` before comparing, or you will grade
    yesterday's audio.
 4. A real listen is still required for anything touching voice or accent: `requireHumanListen` is
-   true for pt-BR (`src/presets/locale/pt-BR.ts:26@a394a34`) because nothing measured proves
-   `instructions` locks the accent.
+   true for pt-BR (`src/presets/locale/pt-BR.ts:28`) because nothing measured proves `instructions`
+   locks the accent. It is no longer decorative — `src/index.ts:403` prints the reminder at the end of
+   a narrated run, so the flag now has a reader and flipping it changes output.
 
 ## References
 

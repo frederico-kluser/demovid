@@ -44,7 +44,7 @@ test("balloonTextOf: com voz usa `say` e ignora o caption", () => {
     url: "./a.html",
     steps: [{ action: "focus", target: "#a", say: "falado", caption: "escrito" }],
   });
-  assert.equal(balloonTextOf(sb.steps[0]!, false), "falado");
+  assert.equal(balloonTextOf(sb.steps[0]!, "say"), "falado");
 });
 
 test("balloonTextOf: sem voz o caption manda", () => {
@@ -53,7 +53,7 @@ test("balloonTextOf: sem voz o caption manda", () => {
     url: "./a.html",
     steps: [{ action: "focus", target: "#a", say: "falado", caption: "escrito" }],
   });
-  assert.equal(balloonTextOf(sb.steps[0]!, true), "escrito");
+  assert.equal(balloonTextOf(sb.steps[0]!, "caption"), "escrito");
 });
 
 test("balloonTextOf: sem caption, o modo mudo cai no `say` em vez de ficar sem balão", () => {
@@ -63,7 +63,7 @@ test("balloonTextOf: sem caption, o modo mudo cai no `say` em vez de ficar sem b
     url: "./a.html",
     steps: [{ action: "focus", target: "#a", say: "só falado" }],
   });
-  assert.equal(balloonTextOf(sb.steps[0]!, true), "só falado");
+  assert.equal(balloonTextOf(sb.steps[0]!, "caption"), "só falado");
 });
 
 test("storyboard: caption é opcional e sobrevive ao parse", () => {

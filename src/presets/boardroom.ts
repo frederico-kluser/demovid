@@ -50,7 +50,7 @@ export const boardroom: Preset = {
   pacing: { cps: 14, gapMs: 700, dwellMinMs: 1500, dwellPerWordMs: 400, dwellCapMs: 9000 },
 
   voice: {
-    voice: "coral",
+    voice: "cedar",
     targetWpm: 140, // no teto do que `instructions` entrega sem precisar de `speed`
     instructions: [
       "Voice Affect: Composta, confiante e precisa. Autoridade sem frieza.",

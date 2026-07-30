@@ -1,0 +1,7 @@
+node_modules/
+out/
+.remotion/
+# A gravação e a narração são artefatos, não fonte. Regenere com
+# `demovid record <demo.yaml> --format remotion`.
+public/demo.mp4
+public/audio/

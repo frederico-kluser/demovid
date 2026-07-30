@@ -11,7 +11,10 @@ overlay/dist/
 *.mkv
 *.mp3
 *.wav
+*.gif
+*.webp
 *.timeline.json
+*.remotion/
 .demovid-cache/
 .demovid/
 src/generated/

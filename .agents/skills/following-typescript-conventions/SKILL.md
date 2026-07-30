@@ -40,6 +40,16 @@ The asymmetry runs the other way too: `overlay/src` is bundled by esbuild and ne
 `tsc -p tsconfig.build.json`, so overlay type errors surface *only* in `npm run typecheck`. Both
 commands are needed; neither subsumes the other.
 
+And there is a third tree, in **neither** program: `templates/remotion/**` is React that demovid never
+compiles — it is copied into a generated project which brings its own `tsconfig` and its own `remotion`
+and `react`. So `npm run typecheck` and `npm run build` are both green while the template does not
+compile at all. Measured, not hypothetical: the first version shipped three real errors (a
+presentation map that widens to a union `<Transition>` cannot infer from, and an `interface` used as
+`<Composition>` props, which never gets TypeScript's implicit index signature and silently drops the
+generic so `calculateMetadata` receives `unknown`). The only command that can fail on them is
+`npm run test:remotion`, which installs the generated project and runs `tsc` inside it. Anything
+written under `templates/` needs that run, not `verify`.
+
 ### No shell, ever — with one documented exception
 
 Call external binaries through `run(bin, args[])` in `src/exec.ts:68@a394a34`. Array args, `execFile`,

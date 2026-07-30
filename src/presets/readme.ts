@@ -83,7 +83,7 @@ export const readme: Preset = {
   pacing: { cps: 12, gapMs: 350, dwellMinMs: 2200, dwellPerWordMs: 420, dwellCapMs: 8000 },
 
   voice: {
-    voice: "coral",
+    voice: "cedar",
     targetWpm: 140,
     instructions: [
       "Voice Affect: Direta e objetiva, como uma nota de release.",

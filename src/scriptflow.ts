@@ -26,7 +26,9 @@ import { refineStoryboard, writeStoryboard } from "./openai/script.js";
 import { askRequired, closePrompt, gate, isInteractive } from "./prompt.js";
 import { record, type RecordOptions, type RecordReport } from "./record.js";
 import { restore, readJournal } from "./annotate.js";
+import { extensionFor, MODE_CAPS } from "./output-mode.js";
 import type { Storyboard } from "./storyboard.js";
+import type { Voice } from "./openai/tts.js";
 
 const log = (line: string): void => console.warn(`[demovid] ${line}`);
 
@@ -40,6 +42,9 @@ export interface ScriptFlowOptions {
   url?: string | undefined;
   /** Where to write the storyboard. Defaults to `<dir>/demo.yaml`. */
   storyboardPath?: string | undefined;
+  /** `--voice` / `--wpm`, stamped onto the generated storyboard. */
+  voice?: Voice | undefined;
+  wpm?: number | undefined;
   /** Everything `record()` takes: resolution, chrome mode, output path. */
   recording: Omit<RecordOptions, "storyboard" | "rehearse" | "onLog">;
 }
@@ -116,11 +121,12 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
     const inventoryText = serializeInventory(inventory);
     const allowed = allowedSelectors(inventory);
 
-    // `animate` no plano de gravação é o que define o produto, e o produto define
-    // o texto: com ele, o modelo escreve `caption` (o balão é o único canal) em
-    // vez de só `say`. Derivado daqui em vez de ser um parâmetro próprio para que
-    // não exista o estado incoerente "roteiro de GIF, gravação de vídeo".
-    const silent = opts.recording.animate !== undefined;
+    // O modo de saída é o que define o produto, e o produto define o texto: sem
+    // voz, o modelo escreve `caption` (o balão é o único canal) em vez de só
+    // `say`. Derivado do modo em vez de ser um parâmetro próprio para que não
+    // exista o estado incoerente "roteiro de GIF, gravação de vídeo".
+    const mode = opts.recording.mode ?? opts.recording.animate?.format ?? "mp4";
+    const silent = !MODE_CAPS[mode].voice;
 
     let storyboard = await writeStoryboard({
       request,
@@ -131,6 +137,13 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
       silent,
       log,
     });
+
+    // The model never chooses a voice (the field is absent from its JSON Schema),
+    // so `--voice` / `--wpm` are applied here — before the storyboard is written,
+    // so the YAML the operator ends up holding records the choice instead of
+    // depending on the flag being typed again next time.
+    if (opts.voice !== undefined) storyboard.voice = opts.voice;
+    if (opts.wpm !== undefined) storyboard.wpm = opts.wpm;
 
     const storyboardPath = opts.storyboardPath ?? resolve(dir, "demo.yaml");
 
@@ -172,7 +185,7 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
     }
 
     // ── gravar ────────────────────────────────────────────────────────────
-    const ext = opts.recording.animate?.format ?? "mp4";
+    const ext = extensionFor(mode);
     const output =
       opts.recording.output ||
       resolve(dir, `${basename(storyboardPath).replace(/\.ya?ml$/, "")}.${ext}`);
@@ -190,6 +203,11 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
           `, ${((Date.now() - t0) / 1000).toFixed(0)}s)`,
       );
       if (report.timeline) log(`timeline: ${report.timeline}`);
+      if (report.remotion) {
+        log(`projeto Remotion: ${report.remotion.dir}`);
+        log(`roteiro de edição: ${report.remotion.edl}`);
+        if (report.remotion.url) log(`Studio: ${report.remotion.url}`);
+      }
       process.stdout.write(`${report.output}\n`);
     }
     exitCode = failed.length > 0 ? 1 : 0;

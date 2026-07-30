@@ -2,53 +2,44 @@
  * Writes the storyboard: the app's real, verified elements plus a sentence of
  * intent in Portuguese go in, a validated `Storyboard` comes out.
  *
- * Uses the Responses API with Structured Outputs, and `STORYBOARD_JSON_SCHEMA`
- * from `src/storyboard.ts` — a schema that has existed since the beginning and
- * had never been imported by anything. It was written for this.
+ * Uses `STORYBOARD_JSON_SCHEMA` from `src/storyboard.ts` — a schema that had
+ * existed since the beginning and had never been imported by anything. It was
+ * written for this.
  *
- * Four things about this call were paid for, and each is a silent failure
- * otherwise:
+ * The transport lives in `src/openai/responses.ts`: the reasoning item that
+ * carries no text, the `incomplete` retry ladder, the ten-minute timeout, and the
+ * JSON-Schema keyword blacklist are documented there, once, for both callers.
  *
- *  1. **The user's request goes LAST.** Same recency reasoning that makes the
- *     order of `required` load-bearing in the schema: the model commits to the
- *     most recent instruction, and the instruction that matters is theirs.
- *  2. **Skip the `reasoning` item when parsing.** `output[]` opens with a
- *     `type: "reasoning"` entry that carries no text. Reading `output[0]`
- *     returns undefined and looks like an empty response.
- *  3. **`status: "incomplete"` is likely, not theoretical.** At `xhigh` the
- *     reasoning tokens routinely eat the whole budget before any answer is
- *     emitted. It is retried with a bigger ceiling rather than surfaced.
- *  4. **Ten minutes, not ninety seconds.** The TTS timeout is nowhere near
- *     enough for a reasoning model at maximum effort.
+ * What is specific to *this* call and stays here:
  *
- * And one thing that must NEVER be added: `pattern`, `minLength` or `maxItems`
- * in the JSON Schema, to constrain selectors. Structured Outputs rejects those
- * under `strict` with a hard 400 that kills the feature outright. Selector
- * validity is checked here, locally, against the inventory.
+ *  - **The user's request goes LAST.** Same recency reasoning that makes the order
+ *    of `required` load-bearing in the schema: the model commits to the most recent
+ *    instruction, and the instruction that matters is theirs.
+ *  - **Selector validity is checked locally, against the inventory.** It cannot be
+ *    a schema constraint — `pattern` is one of the keywords `strict` rejects — so
+ *    `auditStoryboard` does it without spending a call.
  */
 import { z } from "zod";
+import {
+  callStructured,
+  ResponsesError,
+  RESPONSES_EFFORT,
+  RESPONSES_MODEL,
+  stripNulls,
+} from "./responses.js";
 import {
   parseStoryboard,
   STORYBOARD_JSON_SCHEMA,
   type Storyboard,
 } from "../storyboard.js";
 
-const ENDPOINT = "https://api.openai.com/v1/responses";
-
-/** The reasoning model, at maximum thinking. Confirmed available on this key. */
-const MODEL = "gpt-5.4";
-const EFFORT = "xhigh";
-const TIMEOUT_MS = 600_000;
-
-export class ScriptError extends Error {
-  constructor(
-    message: string,
-    public readonly status?: number,
-  ) {
-    super(message);
-    this.name = "ScriptError";
-  }
-}
+/**
+ * The Structured Outputs envelope for every storyboard call — draft and repairs.
+ *
+ * Shared so a repair can never travel under a different schema than the draft it
+ * is repairing, which would let the model "fix" a rule it was never given.
+ */
+const STORYBOARD_CALL = { name: "storyboard", schema: STORYBOARD_JSON_SCHEMA } as const;
 
 const SYSTEM = `You write storyboards for demovid, a tool that records narrated product demos.
 
@@ -105,139 +96,6 @@ Nothing will be said out loud. Write BOTH fields:
 /** The system prompt for the output being written. */
 const systemFor = (silent: boolean): string => (silent ? SYSTEM + GIF_ADDENDUM : SYSTEM);
 
-interface ResponsesResult {
-  status?: string;
-  incomplete_details?: { reason?: string };
-  output_text?: string;
-  output?: Array<{
-    type?: string;
-    content?: Array<{ type?: string; text?: string }>;
-  }>;
-  id?: string;
-  error?: { message?: string; type?: string };
-}
-
-/**
- * Pull the model's text out of a Responses payload.
- *
- * The `output` array opens with a reasoning item that has no text; taking the
- * first element is the obvious mistake and it produces "empty response".
- */
-export function extractText(body: ResponsesResult): string | null {
-  if (typeof body.output_text === "string" && body.output_text.trim()) return body.output_text;
-  for (const item of body.output ?? []) {
-    if (item.type !== "message") continue;
-    const text = (item.content ?? [])
-      .filter((c) => c.type === "output_text" && typeof c.text === "string")
-      .map((c) => c.text)
-      .join("");
-    if (text.trim()) return text;
-  }
-  return null;
-}
-
-/**
- * Structured Outputs models optional fields as `["string", "null"]`, because
- * `strict` requires every property to be present. Zod wants them absent.
- */
-export function stripNulls(raw: unknown): unknown {
-  if (Array.isArray(raw)) return raw.map(stripNulls);
-  if (raw && typeof raw === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-      if (v === null) continue;
-      out[k] = stripNulls(v);
-    }
-    return out;
-  }
-  return raw;
-}
-
-interface CallOptions {
-  input: string;
-  /**
-   * The system prompt. Threaded per call rather than read from the module,
-   * because the repair round-trips reuse the conversation through
-   * `previous_response_id` and a repair that arrived under different
-   * instructions than the draft would be asked to fix rules it never had.
-   */
-  system: string;
-  previousResponseId?: string;
-  maxOutputTokens: number;
-  signal?: AbortSignal;
-}
-
-async function callModel(opts: CallOptions): Promise<{ text: string; id: string }> {
-  const key = process.env["OPENAI_API_KEY"];
-  if (!key) throw new ScriptError("OPENAI_API_KEY ausente — sem ela não dá para escrever o roteiro");
-
-  const body = {
-    model: MODEL,
-    reasoning: { effort: EFFORT },
-    max_output_tokens: opts.maxOutputTokens,
-    instructions: opts.system,
-    ...(opts.previousResponseId ? { previous_response_id: opts.previousResponseId } : {}),
-    input: [{ role: "user", content: [{ type: "input_text", text: opts.input }] }],
-    text: {
-      format: {
-        type: "json_schema",
-        name: "storyboard",
-        strict: true,
-        schema: STORYBOARD_JSON_SCHEMA,
-      },
-    },
-  };
-
-  const res = await fetch(ENDPOINT, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: opts.signal ?? AbortSignal.timeout(TIMEOUT_MS),
-  });
-
-  const json = (await res.json()) as ResponsesResult;
-
-  if (!res.ok) {
-    const message = json.error?.message ?? `HTTP ${res.status}`;
-    if (json.error?.type === "insufficient_quota") {
-      throw new ScriptError("a chave da OpenAI está sem saldo", res.status);
-    }
-    throw new ScriptError(`a API recusou: ${message}`, res.status);
-  }
-
-  if (json.status === "incomplete" && json.incomplete_details?.reason === "max_output_tokens") {
-    throw new ScriptError("INCOMPLETE");
-  }
-
-  const text = extractText(json);
-  if (!text) throw new ScriptError("o modelo respondeu sem texto");
-  return { text, id: json.id ?? "" };
-}
-
-/** Retry the whole call with a bigger ceiling when reasoning ate the budget. */
-async function callWithGrowingBudget(
-  opts: Omit<CallOptions, "maxOutputTokens">,
-  log: (s: string) => void,
-): Promise<{ text: string; id: string }> {
-  const ladder = [16_000, 32_000, 64_000];
-  let last: unknown;
-  for (const budget of ladder) {
-    try {
-      return await callModel({ ...opts, maxOutputTokens: budget });
-    } catch (err) {
-      last = err;
-      if (err instanceof ScriptError && err.message === "INCOMPLETE") {
-        log(`o raciocínio consumiu ${budget} tokens sem responder — tentando com mais espaço`);
-        continue;
-      }
-      throw err;
-    }
-  }
-  throw last instanceof Error
-    ? new ScriptError(`o modelo não conseguiu responder dentro de 64000 tokens: ${last.message}`)
-    : new ScriptError("o modelo não conseguiu responder");
-}
-
 export interface WriteOptions {
   /** What the operator asked for, in Portuguese. */
   request: string;
@@ -277,8 +135,8 @@ export async function writeStoryboard(opts: WriteOptions): Promise<Storyboard> {
     `## PEDIDO DO USUÁRIO (em português — é isto que a demo tem que mostrar)\n${opts.request}`;
 
   const system = systemFor(opts.silent ?? false);
-  opts.log(`pensando com ${MODEL} (esforço ${EFFORT}) — isso leva alguns minutos`);
-  let { text, id } = await callWithGrowingBudget({ input: header, system }, opts.log);
+  opts.log(`pensando com ${RESPONSES_MODEL} (esforço ${RESPONSES_EFFORT}) — isso leva alguns minutos`);
+  let { text, id } = await callStructured({ ...STORYBOARD_CALL, input: header, system, log: opts.log });
 
   // Up to two repairs. `strict` already guarantees the SHAPE, so anything wrong
   // here is meaning: a zod cross-field rule, or a selector that is not in the
@@ -302,26 +160,27 @@ export async function writeStoryboard(opts: WriteOptions): Promise<Storyboard> {
     }
 
     if (attempt === 2) {
-      throw new ScriptError(
+      throw new ResponsesError(
         `o modelo não produziu um roteiro válido depois de 3 tentativas:\n  ${problems.join("\n  ")}`,
       );
     }
 
     opts.log(`corrigindo ${problems.length} problema(s) no roteiro`);
     // Only the problems go back, not the inventory — it is already in context.
-    ({ text, id } = await callWithGrowingBudget(
+    ({ text, id } = await callStructured(
       {
+        ...STORYBOARD_CALL,
         input:
           `The storyboard you just produced has problems. Fix ONLY these and return the whole ` +
           `storyboard again:\n\n${problems.map((p) => `- ${p}`).join("\n")}`,
         system,
         previousResponseId: id,
+        log: opts.log,
       },
-      opts.log,
     ));
   }
 
-  throw new ScriptError("inalcançável");
+  throw new ResponsesError("inalcançável");
 }
 
 export interface RefineOptions extends Omit<WriteOptions, "request"> {
@@ -332,13 +191,13 @@ export interface RefineOptions extends Omit<WriteOptions, "request"> {
 
 export async function refineStoryboard(opts: RefineOptions): Promise<Storyboard> {
   const system = systemFor(opts.silent ?? false);
-  opts.log(`revisando o roteiro com ${MODEL}`);
+  opts.log(`revisando o roteiro com ${RESPONSES_MODEL}`);
   const input =
     `## ROTEIRO ATUAL\n${JSON.stringify(opts.current, null, 2)}\n\n` +
     `## INVENTORY (the ONLY selectors you may use)\n${opts.inventory}\n\n` +
     `## O QUE MUDAR (em português)\n${opts.instruction}`;
 
-  let { text, id } = await callWithGrowingBudget({ input, system }, opts.log);
+  let { text, id } = await callStructured({ ...STORYBOARD_CALL, input, system, log: opts.log });
 
   for (let attempt = 0; attempt < 3; attempt++) {
     let problems: string[] = [];
@@ -356,19 +215,21 @@ export async function refineStoryboard(opts: RefineOptions): Promise<Storyboard>
           : [(err as Error).message];
     }
     if (attempt === 2) {
-      throw new ScriptError(`a revisão não ficou válida:\n  ${problems.join("\n  ")}`);
+      throw new ResponsesError(`a revisão não ficou válida:\n  ${problems.join("\n  ")}`);
     }
-    ({ text, id } = await callWithGrowingBudget(
+    ({ text, id } = await callStructured(
       {
-        input: `Fix ONLY these and return the whole storyboard again:\n\n${problems
+        ...STORYBOARD_CALL,
+        input:
+          `Fix ONLY these and return the whole storyboard again:\n\n${problems
           .map((p) => `- ${p}`)
           .join("\n")}`,
         system,
         previousResponseId: id,
+        log: opts.log,
       },
-      opts.log,
     ));
   }
 
-  throw new ScriptError("inalcançável");
+  throw new ResponsesError("inalcançável");
 }

@@ -15,6 +15,7 @@
  * Those constraints live in the Zod pass instead.
  */
 import { z } from "zod";
+import { VOICES } from "./openai/tts.js";
 
 /**
  * The action vocabulary. Small on purpose: every verb here has to be something
@@ -94,6 +95,19 @@ export const StoryboardSchema = z.object({
 
   preset: z.string().default("boardroom"),
 
+  /**
+   * Voice overrides, on top of whatever the preset picked.
+   *
+   * These two live in the Zod schema and **deliberately not** in
+   * `STORYBOARD_JSON_SCHEMA`. `strict: true` forces every declared property into
+   * `required`, so adding them there would oblige the model to choose a voice on
+   * every storyboard it writes — a decision it has no basis for and which the
+   * preset already made. They exist for a human editing YAML and for `--voice` /
+   * `--wpm`; the model never sees them.
+   */
+  voice: z.enum(VOICES).optional(),
+  wpm: z.number().int().min(60, "menos de 60 wpm não é fala").max(400, "acima de 400 wpm não é inteligível").optional(),
+
   /** Only the user supplies steps — presets never carry them. */
   steps: z.array(StepSchema).min(1, "um storyboard sem passos não grava nada"),
 });
@@ -116,7 +130,7 @@ export const STORYBOARD_JSON_SCHEMA = {
     title: { type: "string", description: "Título curto da demo, em português." },
     url: { type: "string", description: "URL de onde a demo começa." },
     locale: { type: "string", enum: ["pt-BR", "en-US"] },
-    preset: { type: "string", enum: ["boardroom", "helpdesk", "readme"] },
+    preset: { type: "string", enum: ["boardroom", "helpdesk", "readme", "comercial"] },
     steps: {
       type: "array",
       description: "Os passos, em ordem de execução.",
@@ -176,12 +190,18 @@ export function narrationOf(sb: Storyboard): string[] {
 /**
  * The text the balloon shows for a step.
  *
- * One function rather than a `silent ? a : b` at each call site, because there
- * are three of them (the conductor, the dwell calculation and the timeline mark)
- * and a disagreement between any two of them is a balloon whose text does not
- * match the time it is given to be read.
+ * One function rather than a conditional at each call site, because there are
+ * three of them (the conductor, the dwell calculation and the timeline mark) and a
+ * disagreement between any two of them is a balloon whose text does not match the
+ * time it is given to be read.
+ *
+ * Takes the channel rather than a `silent` flag: the caller that knows which field
+ * this output mode speaks through is `MODE_CAPS`, and a boolean here forced every
+ * call site to re-derive it.
  */
-export function balloonTextOf(step: Step, silent: boolean): string | undefined {
-  if (!silent) return step.say;
+export function balloonTextOf(step: Step, channel: "say" | "caption"): string | undefined {
+  if (channel === "say") return step.say;
+  // A storyboard written for video and re-recorded silently has no `caption`;
+  // `say` read cold is worse than nothing only if it is missing too.
   return step.caption ?? step.say;
 }

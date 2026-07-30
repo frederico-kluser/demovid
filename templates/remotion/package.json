@@ -1,0 +1,23 @@
+{
+  "name": "__PROJECT_NAME__",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Montagem comercial gerada pelo demovid.",
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render Comercial out/comercial.mp4",
+    "upgrade": "remotion upgrade"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.501",
+    "@remotion/media": "4.0.501",
+    "@remotion/transitions": "4.0.501",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.501"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "typescript": "5.9.3"
+  }
+}

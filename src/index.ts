@@ -7,15 +7,16 @@ import { parseArgs } from "node:util";
 import { parse as parseYaml } from "yaml";
 import { doctor } from "./doctor.js";
 import { BinaryNotFoundError, CommandFailedError } from "./exec.js";
-import { importSessionEnv, RecCapabilityError, RecError } from "./rec.js";
+import { importSessionEnv, RecCapabilityError, RecError, resolveBackend } from "./rec.js";
 import { restore } from "./annotate.js";
 import { isInteractive } from "./prompt.js";
-import { record, type AnimateOptions } from "./record.js";
-import { isAnimationFormat } from "./gif.js";
+import { record, resolvePreset, type AnimateOptions } from "./record.js";
+import { extensionFor, isOutputMode, MODE_CAPS, type OutputMode } from "./output-mode.js";
+import { LOCALES } from "./presets/index.js";
 import { scriptFlow } from "./scriptflow.js";
 import { parseResolutionSpec, planCapture, resolutionNames, type CapturePlan } from "./resolution.js";
 import { parseStoryboard } from "./storyboard.js";
-import { TtsError } from "./openai/tts.js";
+import { isVoice, isVoiceEngine, speedFor, TTS_MODEL, TtsError, VOICE_ENGINES, VOICES, type Voice, type VoiceEngine } from "./openai/tts.js";
 import { frameExtents, listMonitors, workArea } from "./x11.js";
 
 const HELP = `demovid — vídeos de demonstração narrados, de qualquer projeto frontend
@@ -46,19 +47,45 @@ OPTIONS
                               \`crop\` a removem — junto com qualquer aviso que o
                               browser resolva mostrar ali — ao custo de um passe
                               de ffmpeg. \`keep\` mantém o passe único puro.
-      --format <fmt>          mp4 | gif | webp               (padrão: mp4)
+      --format <fmt>          mp4 | gif | webp | remotion    (padrão: mp4)
                               \`gif\`/\`webp\` entregam SÓ a imagem animada, sem voz:
                               nenhuma chamada de TTS, o balão é o único canal, e
                               o arquivo é reduzido tirando quadros até caber no
                               limite. Sem \`--preset\`, usa o preset \`readme\`.
+                              \`remotion\` entrega o MP4 mais um projeto Remotion
+                              ao lado: o roteiro de edição em JSON, as cenas já
+                              cortadas nos pontos de silêncio medidos, transições,
+                              frases de impacto — e abre o Studio para preview.
+                              Sem \`--preset\`, usa o preset \`comercial\`.
       --max-mb <n>            Teto do gif/webp em MB            (padrão: 5)
       --fps <n>               Quadros por segundo do gif/webp   (padrão: 15)
+      --preset <nome>         boardroom | helpdesk | readme | comercial
+                                                             (padrão: o do roteiro)
+                              Aparência e ritmo: quanta ajuda o espectador precisa.
+                              Traz junto a voz, o wpm e as \`instructions\`.
       --locale <tag>          pt-BR | en-US                  (padrão: pt-BR)
-      --browser <path>        Executável do browser (padrão: detecta Brave)
+      --voice <nome>          Sobrescreve a voz do preset. As de melhor qualidade
+                              são \`marin\` e \`cedar\` — as outras onze existem desde
+                              o \`tts-1\` e soam como isso.
+      --wpm <n>               Palavras por minuto (60–400). Até 140 quem manda é
+                              \`instructions\`; acima disso entra o \`speed\`.
+      --voice-engine <e>      speech | audio-1.5             (padrão: speech)
+                              \`speech\` é /v1/audio/speech: um leitor, barato e
+                              verbatim por construção. \`audio-1.5\` é o
+                              \`gpt-audio-1.5\` — locução muito mais dirigida, mas é
+                              um modelo GENERATIVO (pode parafrasear) e custa ~duas
+                              ordens de grandeza mais. Cada frase é conferida contra
+                              a transcrição e, na dúvida, cai para \`speech\`.
+      --browser <path>        Executável do browser (o mesmo que DEMOVID_BROWSER;
+                              padrão: detecta Brave)
   -y, --yes                   Pula o portão de aprovação e grava direto
       --about "<texto>"       O que demonstrar, em vez de perguntar (uso não-interativo)
       --url <url>             Usa esta URL em vez de subir o servidor de dev
-  -n, --dry-run               Mostra o que faria e sai
+  -n, --dry-run               Em \`record\`/\`rehearse\`: resolve saída, preset, voz,
+                              captura e gravador, imprime e sai. Não abre browser
+                              nem gasta chamada de API.
+      --no-open               Com \`--format remotion\`: gera o projeto e NÃO instala
+                              nem abre o Studio. Imprime os dois comandos.
       --deep                  No \`doctor\`: gasta uma chamada mínima pra provar que há saldo
   -v, --verbose               Log detalhado no stderr
   -h, --help                  Esta ajuda
@@ -80,6 +107,9 @@ EXAMPLES
   demovid record demo.yaml --preset helpdesk
   demovid record demo.yaml --format gif
   demovid record demo.yaml --format webp --max-mb 2
+  demovid record demo.yaml --voice marin --wpm 165
+  demovid record demo.yaml --dry-run
+  demovid record demo.yaml --format remotion
 `;
 
 type CliValues = {
@@ -94,21 +124,31 @@ type CliValues = {
   yes?: boolean | undefined;
   about?: string | undefined;
   url?: string | undefined;
+  voice?: string | undefined;
+  wpm?: string | undefined;
+  "voice-engine"?: string | undefined;
+  "no-open"?: boolean | undefined;
 };
 
 /** Build the guided flow's options out of the parsed flags. */
 async function runScriptFlow(dir: string, values: CliValues): Promise<number> {
   const capture = await buildCapturePlan(values.res, values.monitor);
   const chrome = values.chrome === "keep" || values.chrome === "crop" ? values.chrome : "auto";
-  const animate = buildAnimate({ format: values.format, maxMb: values["max-mb"], fps: values.fps });
+  const mode = resolveOutputMode(values.format);
+  const animate = buildAnimate(mode, { maxMb: values["max-mb"], fps: values.fps });
   return scriptFlow({
     dir,
     yes: values.yes ?? false,
     about: values.about,
     url: values.url,
+    voice: parseVoiceFlag(values.voice),
+    wpm: parseWpmFlag(values.wpm),
     recording: {
       output: values.out ?? "",
       chrome,
+      mode,
+      openStudio: values["no-open"] !== true,
+      ...(parseEngineFlag(values["voice-engine"]) ? { voiceEngine: parseEngineFlag(values["voice-engine"]) } : {}),
       ...(capture ? { capture } : {}),
       ...(animate ? { animate } : {}),
     },
@@ -132,6 +172,39 @@ async function loadStoryboard(path: string): Promise<ReturnType<typeof parseStor
   return sb;
 }
 
+/**
+ * Validate `--voice` at the boundary, where the value is still a bare string.
+ * Shared by both entry points so the two cannot disagree about what a voice is.
+ */
+function parseVoiceFlag(v: string | undefined): Voice | undefined {
+  if (!v) return undefined;
+  if (!isVoice(v)) {
+    throw new Error(
+      `voz desconhecida: "${v}". Disponíveis: ${VOICES.join(", ")}. ` +
+        `As de melhor qualidade são marin e cedar.`,
+    );
+  }
+  return v;
+}
+
+/** `--voice-engine`, validated where the value is still a bare string. */
+function parseEngineFlag(v: string | undefined): VoiceEngine | undefined {
+  if (!v) return undefined;
+  if (!isVoiceEngine(v)) {
+    throw new Error(`motor de voz desconhecido: "${v}". Use ${VOICE_ENGINES.join(" ou ")}.`);
+  }
+  return v;
+}
+
+function parseWpmFlag(v: string | undefined): number | undefined {
+  if (!v) return undefined;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 60 || n > 400) {
+    throw new Error(`--wpm precisa ser um inteiro entre 60 e 400 (recebi "${v}")`);
+  }
+  return n;
+}
+
 interface RunRecordOptions {
   rehearse: boolean;
   out?: string | undefined;
@@ -143,29 +216,39 @@ interface RunRecordOptions {
   format?: string | undefined;
   maxMb?: string | undefined;
   fps?: string | undefined;
+  voice?: string | undefined;
+  wpm?: string | undefined;
+  voiceEngine?: string | undefined;
+  dryRun?: boolean | undefined;
+  noOpen?: boolean | undefined;
+}
+
+/** `--format` → the output mode. Absent means MP4, the behaviour that always was. */
+function resolveOutputMode(format: string | undefined): OutputMode {
+  const spec = format?.toLowerCase();
+  if (!spec) return "mp4";
+  if (!isOutputMode(spec)) {
+    throw new Error(`formato desconhecido: "${format}". Use mp4, gif, webp ou remotion.`);
+  }
+  return spec;
 }
 
 /**
- * Resolve `--format` into the animation options, or `undefined` for plain MP4.
+ * Encoder knobs for `gif`/`webp`, or `undefined` for every other mode.
  *
- * Returning `undefined` rather than `{format:"mp4"}` is what keeps the MP4 path
- * literally unchanged: `record()` branches on the *presence* of `animate`, so
- * there is no way for a default here to quietly turn narration off.
+ * Still `undefined` rather than `{format:"mp4"}`: the GIF encoder runs on the
+ * *presence* of this object, so there is no way for a default here to send an MP4
+ * through a palette pass.
  */
-function buildAnimate(o: {
-  format?: string | undefined;
-  maxMb?: string | undefined;
-  fps?: string | undefined;
-}): AnimateOptions | undefined {
-  const spec = o.format?.toLowerCase();
-  if (!spec || spec === "mp4") {
+function buildAnimate(
+  mode: OutputMode,
+  o: { maxMb?: string | undefined; fps?: string | undefined },
+): AnimateOptions | undefined {
+  if (mode !== "gif" && mode !== "webp") {
     if (o.maxMb || o.fps) {
       console.warn("[demovid] --max-mb e --fps só valem com --format gif|webp — ignorados");
     }
     return undefined;
-  }
-  if (!isAnimationFormat(spec)) {
-    throw new Error(`formato desconhecido: "${o.format}". Use mp4, gif ou webp.`);
   }
 
   const maxMb = o.maxMb === undefined ? undefined : Number(o.maxMb);
@@ -178,7 +261,7 @@ function buildAnimate(o: {
   }
 
   return {
-    format: spec,
+    format: mode,
     ...(maxMb !== undefined ? { maxBytes: Math.round(maxMb * 1024 * 1024) } : {}),
     ...(fps !== undefined ? { fps } : {}),
   };
@@ -228,21 +311,28 @@ async function runRecord(path: string, o: RunRecordOptions): Promise<number> {
   // nothing at all.
   if (o.preset) sb.preset = o.preset;
   if (o.locale) sb.locale = o.locale;
+  const voice = parseVoiceFlag(o.voice);
+  const wpm = parseWpmFlag(o.wpm);
+  const engine = parseEngineFlag(o.voiceEngine);
+  if (voice !== undefined) sb.voice = voice;
+  if (wpm !== undefined) sb.wpm = wpm;
 
-  const animate = buildAnimate(o);
+  const mode = resolveOutputMode(o.format);
+  const caps = MODE_CAPS[mode];
+  const animate = buildAnimate(mode, o);
 
   // `--preset` still wins; this only fills the gap. Without it, `--format gif`
   // on any existing storyboard would inherit boardroom's 17px balloon — and in
-  // silent output that balloon is the entire message. Logged rather than silent,
-  // because a preset the operator did not type is a surprise either way.
-  if (animate && !o.preset && sb.preset !== "readme") {
-    console.warn(`[demovid] --format ${animate.format}: usando o preset readme (era ${sb.preset})`);
-    sb.preset = "readme";
+  // silent output that balloon is the entire message. Logged rather than applied
+  // quietly, because a preset the operator did not type is a surprise either way.
+  if (caps.requiresPreset && !o.preset && sb.preset !== caps.requiresPreset) {
+    console.warn(`[demovid] --format ${mode}: usando o preset ${caps.requiresPreset} (era ${sb.preset})`);
+    sb.preset = caps.requiresPreset;
   }
 
-  const ext = animate?.format ?? "mp4";
+  const ext = extensionFor(mode);
   const output = o.out
-    ? (animate ? withExtension(o.out, ext) : o.out)
+    ? (mode === "mp4" ? o.out : withExtension(o.out, ext))
     : resolve(
         process.env["DEMOVID_REC_DIR"] ?? `${process.env["HOME"]}/Videos`,
         `${basename(path).replace(/\.ya?ml$/, "")}.${ext}`,
@@ -259,12 +349,39 @@ async function runRecord(path: string, o: RunRecordOptions): Promise<number> {
 
   const chrome = o.chrome === "keep" || o.chrome === "crop" ? o.chrome : "auto";
 
+  // `--dry-run` was parsed and never read. It resolves everything that can be
+  // resolved without touching the screen — preset, voice, output path, capture
+  // plan, which encoder would be picked — and stops there. Nothing here launches
+  // a browser or spends an API call, which is the whole point of asking.
+  if (o.dryRun) {
+    const preset = resolvePreset(sb, (w) => console.warn(`[demovid] aviso: ${w}`));
+    const backend = await resolveBackend().catch((e: unknown) => ({ why: `indisponível (${(e as Error).message})` }));
+    process.stdout.write(
+      [
+        `storyboard    ${path} — ${sb.steps.length} passo(s), "${sb.title}"`,
+        `url           ${sb.url}`,
+        `saída         ${output} (${ext})`,
+        `preset        ${sb.preset} · locale ${sb.locale}`,
+        `voz           ${preset.voice.voice} · ${preset.voice.targetWpm} wpm · speed ${speedFor(preset.voice.targetWpm)}`,
+        `motor de voz  ${engine ?? "speech"} · modelo ${engine === "audio-1.5" ? "gpt-audio-1.5" : TTS_MODEL}`,
+        `captura       ${capture ? `${capture.label} → ${capture.window.w}x${capture.window.h}` : "janela histórica 1600x1000"}`,
+        `gravador      ${backend.why}`,
+        `chrome        ${chrome}`,
+        "",
+      ].join("\n"),
+    );
+    return 0;
+  }
+
   const t0 = Date.now();
   const report = await record({
     storyboard: sb,
     output,
     rehearse: o.rehearse,
     chrome,
+    mode,
+    openStudio: o.noOpen !== true,
+    ...(engine ? { voiceEngine: engine } : {}),
     ...(capture ? { capture } : {}),
     ...(animate ? { animate } : {}),
     onLog: (l) => console.warn(`[demovid] ${l}`),
@@ -295,6 +412,19 @@ async function runRecord(path: string, o: RunRecordOptions): Promise<number> {
         `)`,
     );
     if (report.timeline) console.warn(`[demovid] timeline: ${report.timeline}`);
+    if (report.remotion) {
+      console.warn(`[demovid] projeto Remotion: ${report.remotion.dir}`);
+      console.warn(`[demovid] roteiro de edição: ${report.remotion.edl}`);
+      if (report.remotion.url) console.warn(`[demovid] Studio: ${report.remotion.url}`);
+    }
+    // Ouvir antes de publicar não é formalidade: nada medido prova que
+    // `instructions` trava o sotaque em pt-BR.
+    if (report.remotion || MODE_CAPS[mode].voice) {
+      const overlay = LOCALES[sb.locale as keyof typeof LOCALES];
+      if (overlay?.requireHumanListen) {
+        console.warn(`[demovid] ouça antes de publicar: ${sb.locale} tem deriva de sotaque relatada e não verificada`);
+      }
+    }
     process.stdout.write(`${report.output}\n`);
   }
   return failed.length > 0 ? 1 : 0;
@@ -319,6 +449,10 @@ async function main(): Promise<void> {
       // the YAML on every run.
       preset: { type: "string" },
       locale: { type: "string" },
+      // Mesma razão: ausente significa "a voz que o preset escolheu".
+      voice: { type: "string" },
+      wpm: { type: "string" },
+      "voice-engine": { type: "string" },
       // Sem default, como `preset` e `locale`: ausente significa "MP4, o
       // comportamento de sempre", e um default aqui é uma flag que age sozinha.
       format: { type: "string" },
@@ -329,6 +463,7 @@ async function main(): Promise<void> {
       about: { type: "string" },
       url: { type: "string" },
       "dry-run": { type: "boolean", short: "n", default: false },
+      "no-open": { type: "boolean", default: false },
       deep: { type: "boolean", default: false },
       verbose: { type: "boolean", short: "v", default: false },
       help: { type: "boolean", short: "h", default: false },
@@ -336,6 +471,11 @@ async function main(): Promise<void> {
   });
 
   const cmd = positionals[0];
+
+  // `--browser` was parsed and thrown away. It is documented as overriding the
+  // executable, and `DEMOVID_BROWSER` is exactly that override — so the flag
+  // becomes the env var rather than a second resolution path to keep in sync.
+  if (values.browser) process.env["DEMOVID_BROWSER"] = values.browser;
 
   if (values.help) {
     process.stdout.write(HELP);
@@ -380,6 +520,11 @@ async function main(): Promise<void> {
           format: values.format,
           maxMb: values["max-mb"],
           fps: values.fps,
+          voice: values.voice,
+          wpm: values.wpm,
+          voiceEngine: values["voice-engine"],
+          dryRun: values["dry-run"],
+          noOpen: values["no-open"],
         }),
       );
       break;

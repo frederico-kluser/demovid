@@ -22,8 +22,10 @@ import type { Locator, Page } from "playwright-core";
 import "./overlay-api.js"; // traz a declaração de `window.__demovid`
 import { chromeHeightPx, launchBrowser, setContentSize, type LaunchedBrowser } from "./browser.js";
 import { installEmulation } from "./emulate.js";
-import { synthesize, type Clip } from "./openai/tts.js";
+import { synthesize, type Clip, type VoiceEngine } from "./openai/tts.js";
 import { encodeAnimation, type AnimationFormat } from "./gif.js";
+import { MODE_CAPS, type ModeCaps, type OutputMode } from "./output-mode.js";
+import { buildRemotionProject } from "./remotion/index.js";
 import { finalizeVideo, probeVideo, type VideoInfo } from "./postprocess.js";
 import { applyLocale, dwellFor, LOCALES, PRESETS, type Preset } from "./presets/index.js";
 import { startRecording, type Recording } from "./rec.js";
@@ -74,10 +76,21 @@ export interface RecordOptions {
   /** Skip the recorder entirely — drives the browser and reports, records nothing. */
   rehearse?: boolean;
   /**
-   * Deliver an animated image instead of an MP4. Implies silent: no TTS call is
-   * made, no audio is captured, and the balloon carries the whole message.
+   * What is being produced. Drives narration, audio capture and the balloon
+   * through `MODE_CAPS` — see `src/output-mode.ts` for why one boolean could not.
+   * Defaults to the animation's format, then to `mp4`, so the two older callers
+   * keep their exact behaviour.
+   */
+  mode?: OutputMode;
+  /**
+   * Encoder settings for `gif`/`webp`. Only the knobs — the *decision* to go
+   * silent belongs to `mode`.
    */
   animate?: AnimateOptions;
+  /** `remotion` mode: open the Studio when the project is ready. Defaults to true. */
+  openStudio?: boolean;
+  /** Which synthesiser narrates. Defaults to `speech`; see `src/openai/tts-audio.ts`. */
+  voiceEngine?: VoiceEngine;
   onLog?: (line: string) => void;
 }
 
@@ -99,6 +112,8 @@ export interface RecordReport {
   video?: VideoInfo;
   /** Path of the `.timeline.json` written beside the video. */
   timeline?: string;
+  /** Only in `remotion` mode: the generated project and the Studio serving it. */
+  remotion?: { dir: string; edl: string; url?: string };
 }
 
 export interface StepReport {
@@ -125,9 +140,28 @@ export function resolvePreset(sb: Storyboard, warn: (s: string) => void): Preset
   const locale = (LOCALES as Record<string, (typeof LOCALES)["pt-BR"] | undefined>)[sb.locale];
   if (!locale) {
     warn(`locale "${sb.locale}" sem overlay — seguindo sem ajuste de ritmo`);
-    return preset;
+    return withVoiceOverrides(preset, sb);
   }
-  return applyLocale(preset, locale);
+  return withVoiceOverrides(applyLocale(preset, locale), sb);
+}
+
+/**
+ * Apply the storyboard's `voice` / `wpm` on top of the resolved preset.
+ *
+ * Runs **after** `applyLocale` on purpose: the locale overlay appends the accent
+ * lock to `instructions`, and these overrides touch only `voice` and `targetWpm`.
+ * Reversed, choosing a voice would silently drop the accent instruction.
+ */
+function withVoiceOverrides(preset: Preset, sb: Storyboard): Preset {
+  if (sb.voice === undefined && sb.wpm === undefined) return preset;
+  return {
+    ...preset,
+    voice: {
+      ...preset.voice,
+      ...(sb.voice !== undefined ? { voice: sb.voice } : {}),
+      ...(sb.wpm !== undefined ? { targetWpm: sb.wpm } : {}),
+    },
+  };
 }
 
 /** Playwright locator for a step's target. Accepts CSS or `text=` / `role=`. */
@@ -169,7 +203,8 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
   // Silent output takes this whole block out. Not "synthesises and mutes" —
   // `synthesize` is where the money is spent, so a GIF that paid for audio it
   // then threw away would be the expensive version of free.
-  const silent = opts.animate !== undefined;
+  const mode: OutputMode = opts.mode ?? opts.animate?.format ?? "mp4";
+  const caps = MODE_CAPS[mode];
   const cacheDir = opts.cacheDir ?? join(process.cwd(), ".demovid-cache");
 
   // The recorder only ever writes an MP4; a GIF is a conversion of one. The
@@ -180,19 +215,24 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
     ? join(dirname(opts.output), `.demovid-capture-${process.pid}.mp4`)
     : opts.output;
 
-  const perStep = silent
-    ? sb.steps.map(() => [] as string[])
-    : sb.steps.map((s) => (s.say ? splitSentences(s.say) : []));
+  const perStep = caps.voice
+    ? sb.steps.map((s) => (s.say ? splitSentences(s.say) : []))
+    : sb.steps.map(() => [] as string[]);
 
   let clips: Clip[] = [];
-  if (silent) {
+  if (!caps.voice) {
     log("modo silencioso: nenhuma chamada de TTS, o balão é o único canal");
   } else {
     await mkdir(cacheDir, { recursive: true });
     clips = await synthesize(perStep.flat(), {
       cacheDir,
       profile: { voice: preset.voice.voice, instructions: preset.voice.instructions, targetWpm: preset.voice.targetWpm },
+      ...(opts.voiceEngine ? { engine: opts.voiceEngine } : {}),
       onProgress: (d, t, cached) => log(`voz ${d}/${t}${cached ? " (cache)" : ""}`),
+      onWarn: (w) => {
+        warnings.push(w);
+        log(w);
+      },
     });
   }
 
@@ -369,7 +409,7 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
         // is a privacy property: the captured source is the default sink's
         // monitor, so a "silent" take that still recorded system audio would
         // pick up whatever else the machine happens to be playing.
-        audio: silent ? "none" : "system",
+        audio: caps.captureAudio ? "system" : "none",
         fps: 60,
         // The exact anchor between this process's clock and the video's t=0.
         firstFrameTs: true,
@@ -399,7 +439,7 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
       const stepEvent = tl.mark("step-start", { action: step.action, target: step.target }, i);
       try {
         if (died) throw new Error(`o browser morreu antes deste passo: ${died}`);
-        await runStep(page, step, preset, clipsByStep[i] ?? [], cameraRung, log, tl, i, silent);
+        await runStep(page, step, preset, clipsByStep[i] ?? [], cameraRung, log, tl, i, caps);
       } catch (err) {
         report.ok = false;
         report.detail = (err as Error).message;
@@ -510,6 +550,27 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
         };
       }
 
+      // ── 6. a montagem, quando o pedido foi o Remotion ─────────────────────
+      //
+      // Depois do timeline e não antes: o EDL é construído A PARTIR dele. Toda a
+      // decisão de corte vem de `timeline.cuts` e `timeline.narration`, que só
+      // existem agora — é por isso que este passo não pode ser um pré-processo.
+      let remotion: RecordReport["remotion"];
+      if (mode === "remotion") {
+        remotion = await buildRemotionProject({
+          output: opts.output,
+          timeline,
+          clips,
+          title: sb.title,
+          open: opts.openStudio !== false,
+          log,
+          warn: (w) => {
+            warnings.push(w);
+            log(`aviso: ${w}`);
+          },
+        });
+      }
+
       return {
         output: stopped.output,
         bytes: finished.bytes,
@@ -518,6 +579,7 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
         warnings,
         video: finished.info,
         timeline: timelinePath,
+        ...(remotion ? { remotion } : {}),
       };
     }
     return { output: null, bytes: 0, steps, cameraRung, warnings };
@@ -652,7 +714,7 @@ async function runStep(
   log: (s: string) => void,
   tl: TimelineRecorder,
   index: number,
-  silent: boolean,
+  caps: ModeCaps,
 ): Promise<void> {
   // ── aim ──────────────────────────────────────────────────────────────────
   if (step.target) {
@@ -707,7 +769,10 @@ async function runStep(
   }
 
   // ── narrate ──────────────────────────────────────────────────────────────
-  const balloonText = balloonTextOf(step, silent);
+  // Balloon off means the text has another renderer downstream, so it must not
+  // reach the dwell budget either: a reading allowance for text nobody displays
+  // would hold a frame for no reason.
+  const balloonText = caps.balloon ? balloonTextOf(step, caps.text) : undefined;
   if (balloonText) {
     await page.evaluate(
       ([text, sel]) => window.__demovid!.say(text as string, (sel as string | undefined) ?? undefined),

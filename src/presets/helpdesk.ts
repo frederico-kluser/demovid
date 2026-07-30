@@ -53,7 +53,7 @@ export const helpdesk: Preset = {
   pacing: { cps: 11, gapMs: 1000, dwellMinMs: 2000, dwellPerWordMs: 500, dwellCapMs: 10000 },
 
   voice: {
-    voice: "ballad",
+    voice: "marin",
     targetWpm: 125,
     instructions: [
       "Voice Affect: Calma, paciente e acolhedora. Como um colega que já explicou isso antes e não se importa de repetir.",
