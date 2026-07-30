@@ -1,16 +1,24 @@
 /**
- * The Chat Completions API caller, with Structured Outputs.
+ * The Chat Completions API caller, backed by the DeepSeek reasoning model.
  *
  * Extracted from `src/openai/script.ts` when a second caller appeared (the
  * commercial edit script). Migrated from OpenAI's proprietary Responses API
  * (`/v1/responses`) to DeepSeek's Chat Completions API (`/v1/chat/completions`)
- * on 2026-07-30. Two things survived the migration:
+ * on 2026-07-30.
+ *
+ * DeepSeek supports only `response_format: { type: "json_object" }` — the
+ * `json_schema` variant with `strict: true` and a `schema` sub-object is
+ * OpenAI-only. Schema enforcement is therefore **client-side via zod** after
+ * parsing the model's JSON. The schema is included in the system prompt so
+ * the model knows the expected shape.
+ *
+ * Two things survived the migration:
  *
  *  1. **Ten minutes, not ninety seconds.** The TTS timeout is nowhere near enough
- *     for a reasoning model at maximum effort.
+ *     for a reasoning model at full effort.
  *  2. **The JSON Schema keyword blacklist.** `pattern`, `minLength`, `minItems` or
- *     `maxItems` rejected by `strict: true` on OpenAI — DeepSeek's strict mode
- *     may differ, but the hand-written schemas in the callers already avoid them.
+ *     `maxItems` are included in the hand-written schemas anyway (carried from
+ *     OpenAI `strict`) even though DeepSeek does not enforce them.
  *
  * What did NOT survive:
  *
@@ -20,6 +28,8 @@
  *    either returns a complete response or fails with an error).
  *  - `previous_response_id` threading (Chat Completions are stateless — each
  *    call starts fresh with system + user messages).
+ *  - Server-side schema enforcement (Chat Completions `json_object` mode
+ *    guarantees valid JSON but not a specific shape — zod validates after).
  *
  * DeepSeek auth is the same Bearer-token format as OpenAI, with the key in
  * `DEEPSEEK_API_KEY`. The TTS pipeline stays on OpenAI — this module has no
@@ -30,7 +40,8 @@ const ENDPOINT = "https://api.deepseek.com/v1/chat/completions";
 
 /** DeepSeek reasoning model at maximum thinking effort. */
 export const CHAT_MODEL = "deepseek-v4-pro";
-export const CHAT_EFFORT = "xhigh";
+/** DeepSeek max reasoning (maps to "max" — OpenAI "xhigh" compat). */
+export const CHAT_EFFORT = "max";
 const TIMEOUT_MS = 600_000;
 
 /** Default token ceiling — ample for a storyboard or commercial response. */
@@ -75,9 +86,13 @@ export function stripNulls(raw: unknown): unknown {
 }
 
 export interface StructuredCallOptions {
-  /** Name of the schema in the Structured Outputs envelope. */
+  /** Label for the response schema (logged but not sent to DeepSeek). */
   name: string;
-  /** Hand-written JSON Schema. See the header for the keyword blacklist. */
+  /**
+   * Hand-written JSON Schema. Included in the system prompt so the model
+   * knows the expected shape. Validation is client-side via zod — DeepSeek
+   * does not support server-side schema enforcement.
+   */
   schema: unknown;
   system: string;
   input: string;
@@ -93,22 +108,18 @@ async function callOnce(
   const key = process.env["DEEPSEEK_API_KEY"];
   if (!key) throw new ChatError("DEEPSEEK_API_KEY ausente — sem ela não dá para chamar o modelo");
 
+  const systemWithSchema = `${opts.system}\n\nYou MUST respond with a JSON object matching this schema exactly:\n${JSON.stringify(opts.schema, null, 2)}`;
+
   const body = {
     model: CHAT_MODEL,
     messages: [
-      { role: "system", content: opts.system },
+      { role: "system", content: systemWithSchema },
       { role: "user", content: opts.input },
     ],
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: opts.name,
-        strict: true,
-        schema: opts.schema,
-      },
-    },
+    response_format: { type: "json_object" },
     max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
-    ...(CHAT_EFFORT ? { reasoning_effort: CHAT_EFFORT } : {}),
+    thinking: { type: "enabled" },
+    reasoning_effort: CHAT_EFFORT,
   };
 
   const res = await fetch(ENDPOINT, {
@@ -148,7 +159,13 @@ export async function callStructured(
   try {
     return await callOnce(opts);
   } catch (err) {
-    if (err instanceof TypeError || (err as NodeJS.ErrnoException).code === "ECONNRESET") {
+    const code = (err as TypeError & { cause?: { code?: string } }).cause?.code;
+    if (
+      err instanceof TypeError &&
+      code !== "ENOTFOUND" &&
+      code !== "ECONNREFUSED" &&
+      code !== "EAI_AGAIN"
+    ) {
       log("erro de rede na primeira tentativa — tentando mais uma vez");
       return await callOnce(opts);
     }

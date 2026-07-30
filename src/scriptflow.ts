@@ -197,15 +197,7 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
     }
   }
 
-  // ── preparação ─────────────────────────────────────────────────────────
-  if (!opts.skipPrepare && config?.prepare?.commands.length) {
-    log("preparando dados de demonstração");
-    for (const cmd of config.prepare.commands) {
-      const cwd = resolve(dir, cmd.cwd);
-      log(`  $ ${cmd.bin} ${cmd.args.join(" ")}`);
-      await run(cmd.bin, cmd.args, { cwd });
-    }
-  }
+
 
   const server = opts.url
     ? { url: opts.url, started: false, stop: async (): Promise<void> => {} }
@@ -375,6 +367,16 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
         silent,
         log,
       });
+    }
+
+    // ── preparação ─────────────────────────────────────────────────────────
+    if (!opts.skipPrepare && config?.prepare?.commands.length) {
+      log("preparando dados de demonstração");
+      for (const cmd of config.prepare.commands) {
+        const cwd = resolve(dir, cmd.cwd);
+        log(`  $ ${cmd.bin} ${cmd.args.join(" ")}`);
+        await run(cmd.bin, cmd.args, { cwd });
+      }
     }
 
     // ── gravar ────────────────────────────────────────────────────────────
