@@ -22,9 +22,7 @@
 import { z } from "zod";
 import {
   callStructured,
-  ResponsesError,
-  RESPONSES_EFFORT,
-  RESPONSES_MODEL,
+  ChatError,
   stripNulls,
 } from "./responses.js";
 import {
@@ -135,7 +133,7 @@ export async function writeStoryboard(opts: WriteOptions): Promise<Storyboard> {
     `## PEDIDO DO USUÁRIO (em português — é isto que a demo tem que mostrar)\n${opts.request}`;
 
   const system = systemFor(opts.silent ?? false);
-  opts.log(`pensando com ${RESPONSES_MODEL} (esforço ${RESPONSES_EFFORT}) — isso leva alguns minutos`);
+  opts.log(`pensando com deepseek-v4-pro — isso leva alguns minutos`);
   let { text, id } = await callStructured({ ...STORYBOARD_CALL, input: header, system, log: opts.log });
 
   // Up to two repairs. `strict` already guarantees the SHAPE, so anything wrong
@@ -160,13 +158,14 @@ export async function writeStoryboard(opts: WriteOptions): Promise<Storyboard> {
     }
 
     if (attempt === 2) {
-      throw new ResponsesError(
+      throw new ChatError(
         `o modelo não produziu um roteiro válido depois de 3 tentativas:\n  ${problems.join("\n  ")}`,
       );
     }
 
     opts.log(`corrigindo ${problems.length} problema(s) no roteiro`);
     // Only the problems go back, not the inventory — it is already in context.
+    // Each repair is a fresh call — Chat Completions has no conversation threading.
     ({ text, id } = await callStructured(
       {
         ...STORYBOARD_CALL,
@@ -174,13 +173,12 @@ export async function writeStoryboard(opts: WriteOptions): Promise<Storyboard> {
           `The storyboard you just produced has problems. Fix ONLY these and return the whole ` +
           `storyboard again:\n\n${problems.map((p) => `- ${p}`).join("\n")}`,
         system,
-        previousResponseId: id,
         log: opts.log,
       },
     ));
   }
 
-  throw new ResponsesError("inalcançável");
+  throw new ChatError("inalcançável");
 }
 
 export interface RefineOptions extends Omit<WriteOptions, "request"> {
@@ -191,7 +189,7 @@ export interface RefineOptions extends Omit<WriteOptions, "request"> {
 
 export async function refineStoryboard(opts: RefineOptions): Promise<Storyboard> {
   const system = systemFor(opts.silent ?? false);
-  opts.log(`revisando o roteiro com ${RESPONSES_MODEL}`);
+  opts.log(`revisando o roteiro com deepseek-v4-pro`);
   const input =
     `## ROTEIRO ATUAL\n${JSON.stringify(opts.current, null, 2)}\n\n` +
     `## INVENTORY (the ONLY selectors you may use)\n${opts.inventory}\n\n` +
@@ -215,7 +213,7 @@ export async function refineStoryboard(opts: RefineOptions): Promise<Storyboard>
           : [(err as Error).message];
     }
     if (attempt === 2) {
-      throw new ResponsesError(`a revisão não ficou válida:\n  ${problems.join("\n  ")}`);
+      throw new ChatError(`a revisão não ficou válida:\n  ${problems.join("\n  ")}`);
     }
     ({ text, id } = await callStructured(
       {
@@ -225,11 +223,10 @@ export async function refineStoryboard(opts: RefineOptions): Promise<Storyboard>
           .map((p) => `- ${p}`)
           .join("\n")}`,
         system,
-        previousResponseId: id,
         log: opts.log,
       },
     ));
   }
 
-  throw new ResponsesError("inalcançável");
+  throw new ChatError("inalcançável");
 }

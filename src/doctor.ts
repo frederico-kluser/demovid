@@ -145,7 +145,7 @@ export async function doctor(opts: DoctorOptions = {}): Promise<boolean> {
   // flag o relatório diz o que sabe, não o que gostaria de saber.
   const key = process.env["OPENAI_API_KEY"];
   if (!key) {
-    push("OPENAI_API_KEY", "fail", "ausente — necessária para script, refine e voice");
+    push("OPENAI_API_KEY", "fail", "ausente — necessária para a narração (TTS)");
   } else {
     try {
       const res = await fetch("https://api.openai.com/v1/models", {
@@ -196,6 +196,28 @@ export async function doctor(opts: DoctorOptions = {}): Promise<boolean> {
       }
     } catch (e) {
       push("OPENAI_API_KEY", "warn", `não deu pra checar: ${(e as Error).message}`);
+    }
+  }
+
+  // ── DeepSeek ───────────────────────────────────────────────────────────────
+  const dsKey = process.env["DEEPSEEK_API_KEY"];
+  if (!dsKey) {
+    push("DEEPSEEK_API_KEY", "fail", "ausente — necessária para script e commercial com DeepSeek");
+  } else {
+    try {
+      const res = await fetch("https://api.deepseek.com/v1/models", {
+        headers: { Authorization: `Bearer ${dsKey}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (res.status === 401) {
+        push("DEEPSEEK_API_KEY", "fail", "rejeitada (401) — chave inválida ou revogada");
+      } else if (!res.ok) {
+        push("DEEPSEEK_API_KEY", "warn", `HTTP ${res.status} ao checar`);
+      } else {
+        push("DEEPSEEK_API_KEY", "ok", `válida (${dsKey.slice(0, 7)}…)`);
+      }
+    } catch (e) {
+      push("DEEPSEEK_API_KEY", "warn", `não deu pra checar: ${(e as Error).message}`);
     }
   }
 

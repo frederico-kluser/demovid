@@ -48,25 +48,23 @@ test("stripNulls leaves falsy-but-real values alone", () => {
   assert.deepEqual(stripNulls({ a: 0, b: "", c: false, d: null }), { a: 0, b: "", c: false });
 });
 
-test("extractText skips the reasoning item, which carries no text", () => {
-  // Reading output[0] returns undefined and looks exactly like an empty
-  // response from the model.
+test("extractText reads choices[0].message.content from Chat Completions", () => {
+  // Chat Completions returns a flat response — no reasoning item to skip.
   const body = {
-    output: [
-      { type: "reasoning", content: [] },
-      { type: "message", content: [{ type: "output_text", text: '{"title":"ok"}' }] },
-    ],
+    choices: [{ message: { content: '{"title":"ok"}' } }],
   };
   assert.equal(extractText(body), '{"title":"ok"}');
 });
 
-test("extractText prefers the flattened output_text when present", () => {
-  assert.equal(extractText({ output_text: '{"a":1}', output: [] }), '{"a":1}');
+test("extractText returns null when content is null or missing", () => {
+  assert.equal(extractText({ choices: [{ message: { content: null } }] }), null);
+  assert.equal(extractText({}), null);
+  assert.equal(extractText({ choices: [] }), null);
 });
 
 test("extractText returns null rather than an empty string", () => {
-  assert.equal(extractText({ output: [{ type: "reasoning", content: [] }] }), null);
-  assert.equal(extractText({ output_text: "   ", output: [] }), null);
+  assert.equal(extractText({ choices: [{ message: { content: "   " } }] }), null);
+  assert.equal(extractText({ choices: [{ message: {} }] }), null);
 });
 
 test("the edit journal lives inside the project it describes", () => {

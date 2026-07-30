@@ -98,9 +98,9 @@ ENV
   DEMOVID_RECORDER            gsr | ffmpeg — força o backend de captura
 
 ENVIRONMENT
-  OPENAI_API_KEY              Obrigatória para o fluxo guiado (escreve o roteiro) e para a
-                              narração. Com \`--format gif|webp\` a narração não é
-                              sintetizada, então só o roteiro precisa dela.
+  DEEPSEEK_API_KEY            Obrigatória para o fluxo guiado — escreve roteiro e commercial.
+  OPENAI_API_KEY              Obrigatória para a narração (TTS). Com \`--format gif|webp\` a
+                              narração não é sintetizada, então esta chave não é usada.
   DEMOVID_BROWSER             Sobrescreve o executável do browser
   DEMOVID_REC_DIR             Onde os MP4 são escritos (padrão: ~/Videos)
 
