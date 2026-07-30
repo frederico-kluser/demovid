@@ -213,7 +213,15 @@ async function durationOf(file: string): Promise<number> {
     "-of", "default=nw=1:nk=1",
     file,
   ]);
-  return Number.parseFloat(stdout.trim());
+  const secs = Number.parseFloat(stdout.trim());
+  // A NaN here is silent and travels far: it becomes `durationMs: NaN` in the clip
+  // handed to the page (so the playback watchdog fires immediately instead of after
+  // the clip), and `null` in the EDL after JSON round-trips. ffprobe printing
+  // nothing on a truncated file is how that starts.
+  if (!Number.isFinite(secs) || secs <= 0) {
+    throw new TtsError(`ffprobe não leu uma duração válida de ${file} (leu ${JSON.stringify(stdout.trim())})`);
+  }
+  return secs;
 }
 
 /**
@@ -353,7 +361,11 @@ async function renderOne(text: string, opts: SynthOptions): Promise<Clip> {
   );
 
   if (!hit) {
-    const raw = join(opts.cacheDir, `${id}.raw.${RAW_FORMAT}`);
+    // The pid is in the name, not just the hash. The cache is shared and two
+    // demovid runs synthesising the same sentence would otherwise write, ffmpeg and
+    // delete ONE intermediate file — the loser reads a file the winner already
+    // removed. The final `<id>.mp3` is content-addressed and safe to race on.
+    const raw = join(opts.cacheDir, `${id}.raw.${process.pid}.${RAW_FORMAT}`);
     try {
       // The experimental engine is tried first and never trusted. A paraphrase, a
       // refusal or a missing audio part all land here, and the run continues on the
