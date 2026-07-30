@@ -63,7 +63,9 @@ CLI (src/index.ts)  →  record()  (src/record.ts, the conductor)
 | Reading X11 (monitors, work area, geometry) | `src/x11.ts` | anywhere |
 | Timing of everything, for the sidecar | `src/timeline.ts` | `src/record.ts` (it only marks) |
 | Discovering the app's addressable elements | `src/project/inventory.ts` | the model's prompt |
-| Project detection (git, pkg.json, framework, routes) | `src/project/scan.ts` | `src/scriptflow.ts` (it only consumes) |
+| Project detection (git, pkg.json, workspaces, framework, config port, routes) | `src/project/scan.ts` | `src/scriptflow.ts` (it only consumes) |
+| Asking an agent what the files do not say (how to run, auth, what to demo) | `src/project/discover.ts` | `src/project/scan.ts` — it stays deterministic |
+| The `.demovid.json` cache and its fingerprint | `src/project/config.ts` | anywhere |
 | The guided flow's order | `src/scriptflow.ts` | `src/index.ts` (it only parses flags) |
 | Camera transform | `overlay/src/stage.ts` | `src/record.ts` (it only sets state) |
 | Look and pace | `src/presets/**` | the overlay (it receives style, never defines it) |

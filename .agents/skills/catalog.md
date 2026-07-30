@@ -49,6 +49,12 @@ Carries the measured constraints of the Remotion project demovid generates — w
 
 *Verified by:* `npm test`
 
+### `configuring-target-projects`
+
+Carries how demovid detects which frontend framework a target app was built with and how to boot its dev server — workspace-aware detection, the port ranking, the race between a guessed port and the URL a dev server announces, and the pi coding agent that discovers whatever the manifests leave unstated. Use whenever you touch scan.ts, devserver.ts, discover.ts or config.ts under src/project/, change framework or port detection, add a build tool, or debug a dev server demovid waits on forever, a port detected as free while the app is already serving, a workspaces monorepo whose framework came back desconhecido, an agent call that hangs after it already answered, or a .demovid.json that refuses to refresh. Every rule here replaced one that looked correct and shipped anyway.
+
+*Verified by:* `npm test`
+
 ### `recording-with-rec`
 
 Carries the process and signal semantics of the recorder child, the two backends and how they differ, and the Node API that actively misreports whether the recorder is alive. Use whenever you touch src/recorder/**, src/record.ts or src/browser.ts, start or stop a recording, add pause behaviour, debug a truncated MP4, a recorder left capturing after the process exits, a browser that closes mid-run, or a window id that resolves to the wrong window. Assume the obvious implementation is wrong here — each rule below replaced one that looked correct.

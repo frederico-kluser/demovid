@@ -1,0 +1,94 @@
+{
+  "routing": {
+    "must_trigger": [
+      "demovid waited on the wrong port and killed my dev server",
+      "the framework was not recognised in a workspaces monorepo",
+      "the port is reported free while the app is already serving",
+      "the pi agent answered but the call never returned",
+      "how do I stop demovid from asking the agent on every run"
+    ],
+    "must_not_trigger": [
+      "magnified text looks blurry during the zoom",
+      "the mp4 came out truncated and will not play",
+      "split narration into sentences before calling the api"
+    ]
+  },
+  "claims": [
+    {
+      "assert": "code-contains",
+      "path": "src/project/scan.ts",
+      "needle": "expandWorkspaces",
+      "why": "the root manifest alone reported desconhecido on GitCraque; members must be scanned"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/project/scan.ts",
+      "needle": "portFromConfigSource",
+      "why": "5273 is written in vite.config.ts and nowhere else the scan used to look"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/project/scan.ts",
+      "needle": "pnpm-workspace.yaml",
+      "why": "pnpm keeps the workspace list out of package.json entirely"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/project/scan.ts",
+      "needle": "portSource",
+      "why": "the ranking script>config>default is what confident vouches for; a bare number cannot carry its provenance"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/project/devserver.ts",
+      "needle": "probeHost(\"::1\"",
+      "why": "Vite 7 bound [::1]:5273 and nothing on IPv4 — the USAGE form, since the bare token ::1 also appears in the URL regex"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/project/devserver.ts",
+      "needle": "waitForServer",
+      "why": "the announcement must race the guess; reading it after the wait succeeded is why it never fired"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/project/devserver.ts",
+      "needle": "graceMs",
+      "why": "an orphaned API answers in 300ms on a port that is not the app; the trusted guess needs a head start"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/project/discover.ts",
+      "needle": "child.once(\"exit\"",
+      "why": "execFile resolves on stdio close, so a leaked grandchild hangs it after the answer is in hand"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/project/discover.ts",
+      "needle": "message_end",
+      "why": "the answer is the last message_end's text part, never the last line of the stream"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/project/config.ts",
+      "needle": "fingerprint",
+      "why": "invalidation is by manifest content; a TTL either expires a correct answer or serves a stale one"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/scriptflow.ts",
+      "needle": "SIGTERM",
+      "why": "finally does not run on a signal, and the orphan then holds the port"
+    },
+    {
+      "assert": "file-exists",
+      "path": "test/project-config.test.ts",
+      "why": "the regressions are pinned separately because three defects had to line up to produce the reported failure"
+    },
+    {
+      "assert": "npm-script",
+      "name": "test",
+      "why": "declared verification signal"
+    }
+  ]
+}

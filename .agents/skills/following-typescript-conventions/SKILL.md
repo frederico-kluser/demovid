@@ -61,11 +61,20 @@ Two corollaries that have already come up:
 - PATH lookup is done in Node by iterating `process.env.PATH` (`src/doctor.ts:35-47@a394a34`).
   `sh -c "command -v"` is wrong twice over: it is a shell, and `command` is a shell builtin that
   cannot be exec'd directly anyway.
-- The deliberate bypasses are the two long-lived children that must be *signalled* rather than
+- The deliberate bypasses are the long-lived children that must be *signalled* rather than
   awaited: the recorder (`src/recorder/index.ts:302@72303c9`) and the project's dev server
   (`src/project/devserver.ts`). Any new one follows that pattern; everything else goes through
   `run()`. The dev server additionally spawns `detached: true` and is killed by **process group** —
   signalling the `npm` wrapper alone orphans the real server, which then holds the port.
+- **The third bypass is not about signalling — it is about when `execFile` resolves.** `promisify(execFile)`
+  settles when the child's **stdio closes**, not when it exits. So any process the child leaves behind
+  inherits the stdout pipe, the pipe never closes, and the call hangs *after* the work is done. Measured
+  2026-07-30 with the `pi` coding agent, whose `bash` tool can leave a dev server running: the identical
+  prompt finished in 44 s writing to a file and blew a 9-minute ceiling through `execFile`. `runAgent` in
+  `src/project/discover.ts` therefore spawns, resolves on the `exit` event, sets `stdio[0]: "ignore"` so
+  nothing can block waiting to be typed at, and goes `detached` so a timeout kills the whole group.
+  Applies to any child that may spawn its own background processes; a plain `ffprobe` cannot and stays on
+  `run()`.
 - **`page.evaluate` is a third bypass, of a different kind.** Under `tsx`, esbuild's `keepNames`
   compiles every named function to `__name(fn, "fn")`, and `page.evaluate` serialises the *compiled*
   source — so the helper reference reaches the browser while the helper does not, and the call dies
