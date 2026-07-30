@@ -87,8 +87,21 @@ was broken.
 ### The e2e tests need a real display and a free capture slot
 
 They open windows on X11 and `rec` refuses to start when another capture is live. If `test:record`
-cannot run, that is a **missing signal**, not a pass: check `pgrep -f 'gpu-screen-recorder -w'` and
+cannot run, that is a **missing signal**, not a pass: check the capture slot and
 `npm run dev -- doctor` before concluding anything.
+
+Check the slot by process **name**, never with `pgrep -f`:
+
+```bash
+ps -eo comm | grep -qE '^gpu-screen-rec' && echo busy || echo free
+```
+
+`pgrep -f 'gpu-screen-recorder -w'` matches **its own invocation** — the shell whose command line
+contains the pattern is itself a process — so it reports a live capture on an idle machine. Observed
+here: `pgrep -f` said busy while `ps -eo comm` correctly said none. The failure direction is the
+harmful one: it invents a reason to skip the recording test, which is how a missing signal gets read
+as a conflict. Note also that `pgrep -x gpu-screen-recorder` cannot work either — `comm` is truncated
+to 15 characters, which is why the pattern above is anchored and short.
 
 ## Procedure
 

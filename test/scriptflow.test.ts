@@ -11,7 +11,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { urlFromOutput } from "../src/project/devserver.js";
-import { extractText, stripNulls } from "../src/openai/script.js";
+// Moved to `responses.ts` when a second caller (the commercial edit) appeared.
+import { extractText, stripNulls } from "../src/openai/responses.js";
 import { journalPathFor } from "../src/annotate.js";
 
 test("the dev server's own announced URL is preferred over any port guess", () => {

@@ -3,14 +3,16 @@
  * Camada mais tardia vence.
  */
 import { boardroom } from "./boardroom.js";
+import { comercial } from "./comercial.js";
 import { helpdesk } from "./helpdesk.js";
+import { readme } from "./readme.js";
 import { ptBR } from "./locale/pt-BR.js";
 import type { LocaleOverlay, Preset } from "./types.js";
 
 export * from "./types.js";
-export { boardroom, helpdesk, ptBR };
+export { boardroom, comercial, helpdesk, readme, ptBR };
 
-export const PRESETS = { boardroom, helpdesk } as const;
+export const PRESETS = { boardroom, helpdesk, readme, comercial } as const;
 export const LOCALES = { "pt-BR": ptBR } as const;
 
 export type PresetName = keyof typeof PRESETS;

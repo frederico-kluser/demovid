@@ -28,6 +28,12 @@ export interface RunOptions {
   maxBuffer?: number;
   /** Extra env on top of `process.env`. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * Working directory. Needed by the package manager, which resolves the project
+   * from where it runs — and passing `--prefix` instead would be a second way to
+   * say the same thing.
+   */
+  cwd?: string;
 }
 
 const INSTALL_HINTS: Record<string, string> = {
@@ -98,6 +104,7 @@ export async function run(
     const { stdout, stderr } = await execFileAsync(bin, args, {
       maxBuffer: opts.maxBuffer ?? 64 * 1024 * 1024,
       encoding: "utf8",
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
       ...(opts.env ? { env: { ...process.env, ...opts.env } } : {}),
     });
     return { stdout: stdout.toString(), stderr: stderr.toString() };

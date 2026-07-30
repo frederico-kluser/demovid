@@ -160,6 +160,13 @@ export async function launchBrowser(opts: LaunchOptions = {}): Promise<LaunchedB
       "--test-type",
       "--disable-infobars",
       "--disable-features=Translate,MediaRouter,InfiniteSessionRestore",
+      // The narration is an <audio> element that nobody clicked. Chromium's
+      // autoplay policy needs a user gesture, and the profile is disposable, so no
+      // gesture will ever have happened — `play()` rejects and the take ships
+      // silent with a perfectly healthy-looking audio track.
+      // `overlay/src/sequencer.ts` treats that rejection as fatal precisely so it
+      // cannot pass unnoticed; this flag is what keeps it from happening at all.
+      "--autoplay-policy=no-user-gesture-required",
       // Keep the renderer at full speed even if the window loses focus mid-take.
       "--disable-backgrounding-occluded-windows",
       "--disable-renderer-backgrounding",

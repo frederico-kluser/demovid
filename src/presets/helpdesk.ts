@@ -44,12 +44,16 @@ export const helpdesk: Preset = {
     accent: "#9639e7",
     shadow: "0 1px 2px rgba(0,0,0,.08), 0 4px 12px rgba(0,0,0,.10)",
     placement: "anchored",
+    // Os valores que este preset já tinha na prática, agora explícitos: 1px era
+    // o blur cravado no overlay, e a esquiva do cursor não existia.
+    backdropBlurPx: 1,
+    avoidCursor: false,
   },
 
   pacing: { cps: 11, gapMs: 1000, dwellMinMs: 2000, dwellPerWordMs: 500, dwellCapMs: 10000 },
 
   voice: {
-    voice: "ballad",
+    voice: "marin",
     targetWpm: 125,
     instructions: [
       "Voice Affect: Calma, paciente e acolhedora. Como um colega que já explicou isso antes e não se importa de repetir.",

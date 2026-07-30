@@ -78,6 +78,8 @@ const DEFAULT_STYLE: OverlayStyle = {
 
 let host: HTMLElement | null = null;
 let root: ShadowRoot | null = null;
+/** The style `mount()` actually resolved. Read by `cursorBox()`. */
+let activeStyle: OverlayStyle | null = null;
 let cursor: Cursor | null = null;
 let spotlight: Spotlight | null = null;
 let balloon: Balloon | null = null;
@@ -125,6 +127,7 @@ function mountOverlay(style: OverlayStyle): HTMLElement {
   );
 
   root = shadow;
+  activeStyle = style;
   spotlight = new Spotlight(shadow, style.spotlight);
   balloon = new Balloon(shadow, style.balloon);
   cursor = new Cursor(shadow, style.cursor);
@@ -141,6 +144,24 @@ function repromote(): void {
   } catch {
     /* already in the desired state */
   }
+}
+
+/**
+ * Viewport-space footprint of the synthetic cursor, or `null` when it is not on
+ * screen yet.
+ *
+ * The box is the *visual* extent, not the hotspot: the ring is drawn around the
+ * dot and reaches `ring.toPx`, so a balloon that only cleared the dot would still
+ * land on top of the anticipation ring. `Cursor.position` starts at (-100,-100),
+ * which falls outside any viewport and therefore stops overlapping anything on
+ * its own — no separate "has it been shown" flag to keep in sync.
+ */
+function cursorBox(): Box | null {
+  if (!cursor || !activeStyle) return null;
+  const { x, y } = cursor.position;
+  const c = activeStyle.cursor;
+  const size = Math.max(c.dotPx, c.ring?.toPx ?? 0);
+  return { x: x - size / 2, y: y - size / 2, w: size, h: size };
 }
 
 /** Viewport-space rect of a selector. Already camera-transformed by the browser. */
@@ -218,7 +239,7 @@ const api = {
   },
 
   say(text: string, selector?: string): void {
-    balloon?.show(text, selector ? rectOf(selector) : null);
+    balloon?.show(text, selector ? rectOf(selector) : null, cursorBox());
   },
   hush(): void {
     balloon?.hide();

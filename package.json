@@ -1,7 +1,7 @@
 {
   "name": "demovid",
   "version": "0.2.0",
-  "description": "Rode dentro do seu projeto frontend, descreva a demo em português, e receba um MP4 narrado + uma timeline com os tempos de cada fala e os melhores pontos de corte. O roteiro é escrito por IA a partir dos elementos reais do app.",
+  "description": "Rode dentro do seu projeto frontend, descreva a demo em portugu\u00eas, e receba um MP4 narrado + uma timeline com os tempos de cada fala e os melhores pontos de corte. O roteiro \u00e9 escrito por IA a partir dos elementos reais do app.",
   "type": "module",
   "bin": {
     "demovid": "dist/index.js"
@@ -17,6 +17,7 @@
   },
   "files": [
     "dist",
+    "templates",
     "README.md",
     "LICENSE",
     "NOTICE"
@@ -37,7 +38,9 @@
     "test": "node --import tsx --test test/*.test.ts",
     "link": "npm run build && npm link && demovid --help",
     "test:e2e": "node test/stage.e2e.mjs",
-    "verify": "npm run typecheck && npm run bake:springs && npm run build && npm test && npm run test:e2e && npm run test:record",
+    "test:gif": "node --import tsx test/gif.e2e.ts",
+    "test:remotion": "node --import tsx test/remotion.e2e.ts",
+    "verify": "npm run typecheck && npm run bake:springs && npm run build && npm test && npm run test:gif && npm run test:e2e && npm run test:record",
     "test:record": "node --import tsx test/record.e2e.ts",
     "verify:pack": "npm pack --dry-run"
   },

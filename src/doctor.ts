@@ -8,6 +8,7 @@
  */
 import { access, constants } from "node:fs/promises";
 import { run, which } from "./exec.js";
+import { TTS_MODEL } from "./openai/tts.js";
 import { findRunningCaptures, resolveBackend } from "./rec.js";
 
 export interface DoctorOptions {
@@ -163,14 +164,24 @@ export async function doctor(opts: DoctorOptions = {}): Promise<boolean> {
         );
       } else {
         // Uma sílaba de TTS: custa frações de centavo e responde de verdade.
+        //
+        // Sonda o snapshot EXATO que `src/openai/tts.ts` usa, não o alias. Depois
+        // que a OpenAI desligou `gpt-4o-mini-tts-2025-03-20` (23/07/2026), "a
+        // chave tem saldo" e "o modelo que eu vou chamar ainda existe" passaram a
+        // ser duas perguntas — e só a segunda explica uma gravação que falha na
+        // primeira frase.
         const probe = await fetch("https://api.openai.com/v1/audio/speech", {
           method: "POST",
           headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "gpt-4o-mini-tts", voice: "coral", input: "oi", response_format: "mp3" }),
+          body: JSON.stringify({ model: TTS_MODEL, voice: "cedar", input: "oi", response_format: "mp3" }),
           signal: AbortSignal.timeout(30_000),
         });
         if (probe.ok) {
-          push("OPENAI_API_KEY", "ok", `válida e COM saldo — TTS respondeu ${(await probe.arrayBuffer()).byteLength} bytes`);
+          push(
+            "OPENAI_API_KEY",
+            "ok",
+            `válida e COM saldo — ${TTS_MODEL} respondeu ${(await probe.arrayBuffer()).byteLength} bytes`,
+          );
         } else {
           const body = await probe.text();
           const insufficient = body.includes("insufficient_quota");

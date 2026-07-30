@@ -16,19 +16,22 @@
  * some apps ignore untrusted ones. The synthetic cursor is only ever the visual
  * half — it draws where the real, trusted click is about to land.
  */
-import { mkdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, rm, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
 import "./overlay-api.js"; // traz a declaração de `window.__demovid`
 import { chromeHeightPx, launchBrowser, setContentSize, type LaunchedBrowser } from "./browser.js";
 import { installEmulation } from "./emulate.js";
-import { synthesize, type Clip } from "./openai/tts.js";
+import { synthesize, type Clip, type VoiceEngine } from "./openai/tts.js";
+import { encodeAnimation, type AnimationFormat } from "./gif.js";
+import { MODE_CAPS, type ModeCaps, type OutputMode } from "./output-mode.js";
+import { buildRemotionProject } from "./remotion/index.js";
 import { finalizeVideo, probeVideo, type VideoInfo } from "./postprocess.js";
 import { applyLocale, dwellFor, LOCALES, PRESETS, type Preset } from "./presets/index.js";
 import { startRecording, type Recording } from "./rec.js";
 import type { CapturePlan } from "./resolution.js";
 import { splitSentences } from "./openai/tts.js";
-import type { Step, Storyboard } from "./storyboard.js";
+import { balloonTextOf, type Step, type Storyboard } from "./storyboard.js";
 import { buildTimeline, timelinePathFor, TimelineRecorder, writeTimeline } from "./timeline.js";
 import { parkPointer, windowGeometry } from "./x11.js";
 
@@ -72,7 +75,31 @@ export interface RecordOptions {
   chrome?: "keep" | "crop" | "auto";
   /** Skip the recorder entirely — drives the browser and reports, records nothing. */
   rehearse?: boolean;
+  /**
+   * What is being produced. Drives narration, audio capture and the balloon
+   * through `MODE_CAPS` — see `src/output-mode.ts` for why one boolean could not.
+   * Defaults to the animation's format, then to `mp4`, so the two older callers
+   * keep their exact behaviour.
+   */
+  mode?: OutputMode;
+  /**
+   * Encoder settings for `gif`/`webp`. Only the knobs — the *decision* to go
+   * silent belongs to `mode`.
+   */
+  animate?: AnimateOptions;
+  /** `remotion` mode: open the Studio when the project is ready. Defaults to true. */
+  openStudio?: boolean;
+  /** Which synthesiser narrates. Defaults to `speech`; see `src/openai/tts-audio.ts`. */
+  voiceEngine?: VoiceEngine;
   onLog?: (line: string) => void;
+}
+
+export interface AnimateOptions {
+  format: AnimationFormat;
+  /** Hard ceiling in bytes. Frames are dropped until the file fits. */
+  maxBytes?: number;
+  fps?: number;
+  width?: number;
 }
 
 export interface RecordReport {
@@ -85,6 +112,8 @@ export interface RecordReport {
   video?: VideoInfo;
   /** Path of the `.timeline.json` written beside the video. */
   timeline?: string;
+  /** Only in `remotion` mode: the generated project and the Studio serving it. */
+  remotion?: { dir: string; edl: string; url?: string };
 }
 
 export interface StepReport {
@@ -111,9 +140,28 @@ export function resolvePreset(sb: Storyboard, warn: (s: string) => void): Preset
   const locale = (LOCALES as Record<string, (typeof LOCALES)["pt-BR"] | undefined>)[sb.locale];
   if (!locale) {
     warn(`locale "${sb.locale}" sem overlay — seguindo sem ajuste de ritmo`);
-    return preset;
+    return withVoiceOverrides(preset, sb);
   }
-  return applyLocale(preset, locale);
+  return withVoiceOverrides(applyLocale(preset, locale), sb);
+}
+
+/**
+ * Apply the storyboard's `voice` / `wpm` on top of the resolved preset.
+ *
+ * Runs **after** `applyLocale` on purpose: the locale overlay appends the accent
+ * lock to `instructions`, and these overrides touch only `voice` and `targetWpm`.
+ * Reversed, choosing a voice would silently drop the accent instruction.
+ */
+function withVoiceOverrides(preset: Preset, sb: Storyboard): Preset {
+  if (sb.voice === undefined && sb.wpm === undefined) return preset;
+  return {
+    ...preset,
+    voice: {
+      ...preset.voice,
+      ...(sb.voice !== undefined ? { voice: sb.voice } : {}),
+      ...(sb.wpm !== undefined ? { targetWpm: sb.wpm } : {}),
+    },
+  };
 }
 
 /** Playwright locator for a step's target. Accepts CSS or `text=` / `role=`. */
@@ -151,15 +199,42 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
   });
 
   // ── 1. narração, antes de qualquer coisa ──────────────────────────────────
+  //
+  // Silent output takes this whole block out. Not "synthesises and mutes" —
+  // `synthesize` is where the money is spent, so a GIF that paid for audio it
+  // then threw away would be the expensive version of free.
+  const mode: OutputMode = opts.mode ?? opts.animate?.format ?? "mp4";
+  const caps = MODE_CAPS[mode];
   const cacheDir = opts.cacheDir ?? join(process.cwd(), ".demovid-cache");
-  await mkdir(cacheDir, { recursive: true });
 
-  const perStep = sb.steps.map((s) => (s.say ? splitSentences(s.say) : []));
-  const clips = await synthesize(perStep.flat(), {
-    cacheDir,
-    profile: { voice: preset.voice.voice, instructions: preset.voice.instructions, targetWpm: preset.voice.targetWpm },
-    onProgress: (d, t, cached) => log(`voz ${d}/${t}${cached ? " (cache)" : ""}`),
-  });
+  // The recorder only ever writes an MP4; a GIF is a conversion of one. The
+  // intermediate is a dotfile beside the real output rather than in /tmp, so it
+  // lands on the same filesystem — a rename or a large write across devices is
+  // exactly where a 200 MB capture runs out of room in the least helpful way.
+  const capturePath = opts.animate
+    ? join(dirname(opts.output), `.demovid-capture-${process.pid}.mp4`)
+    : opts.output;
+
+  const perStep = caps.voice
+    ? sb.steps.map((s) => (s.say ? splitSentences(s.say) : []))
+    : sb.steps.map(() => [] as string[]);
+
+  let clips: Clip[] = [];
+  if (!caps.voice) {
+    log("modo silencioso: nenhuma chamada de TTS, o balão é o único canal");
+  } else {
+    await mkdir(cacheDir, { recursive: true });
+    clips = await synthesize(perStep.flat(), {
+      cacheDir,
+      profile: { voice: preset.voice.voice, instructions: preset.voice.instructions, targetWpm: preset.voice.targetWpm },
+      ...(opts.voiceEngine ? { engine: opts.voiceEngine } : {}),
+      onProgress: (d, t, cached) => log(`voz ${d}/${t}${cached ? " (cache)" : ""}`),
+      onWarn: (w) => {
+        warnings.push(w);
+        log(w);
+      },
+    });
+  }
 
   // Map each step back to its clips, in order.
   const clipsByStep: Clip[][] = [];
@@ -301,11 +376,10 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
       warnings.push("a página não chegou a `load` em 30s — seguindo com o que carregou");
     });
 
-    const mounted = await page.evaluate((style) => window.__demovid?.mount(style), {
-      cursor: { ...preset.cursor, accent: preset.balloon.accent },
-      spotlight: { ...preset.spotlight, accent: preset.balloon.accent },
-      balloon: preset.balloon,
-    } as never);
+    const mounted = await page.evaluate(
+      (style) => window.__demovid?.mount(style),
+      overlayStyleOf(preset) as never,
+    );
 
     if (!mounted?.stage) {
       // The stage is the only optional layer. Without it there is no zoom, but
@@ -330,8 +404,12 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
       recording = await startRecording({
         // Always the window, never a screen region. See the note above.
         target: { kind: "window", windowId: browser.windowId },
-        output: opts.output,
-        audio: "system",
+        output: capturePath,
+        // Silent output captures no audio at all. Beyond saving an encode, this
+        // is a privacy property: the captured source is the default sink's
+        // monitor, so a "silent" take that still recorded system audio would
+        // pick up whatever else the machine happens to be playing.
+        audio: caps.captureAudio ? "system" : "none",
         fps: 60,
         // The exact anchor between this process's clock and the video's t=0.
         firstFrameTs: true,
@@ -361,7 +439,7 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
       const stepEvent = tl.mark("step-start", { action: step.action, target: step.target }, i);
       try {
         if (died) throw new Error(`o browser morreu antes deste passo: ${died}`);
-        await runStep(page, step, preset, clipsByStep[i] ?? [], cameraRung, log, tl, i);
+        await runStep(page, step, preset, clipsByStep[i] ?? [], cameraRung, log, tl, i, caps);
       } catch (err) {
         report.ok = false;
         report.detail = (err as Error).message;
@@ -406,9 +484,11 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
       const finished = await finalizeCapture(stopped.output, plan, cropRect, log);
       for (const w of finished.warnings) warnings.push(w);
 
-      const timelinePath = timelinePathFor(stopped.output);
+      // Beside the file the operator ends up holding, not beside the throwaway
+      // capture — `demo.gif` gets `demo.timeline.json`.
+      const timelinePath = timelinePathFor(opts.output);
       const timeline = buildTimeline({
-        outputPath: stopped.output,
+        outputPath: opts.output,
         video: finished.info,
         backend: rec.backend,
         scaled: plan?.scaleNeeded ?? false,
@@ -430,6 +510,67 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
           `${timeline.cuts.length} ponto(s) de corte)`,
       );
 
+      // ── 5. o GIF, quando foi ele o pedido ─────────────────────────────────
+      //
+      // `buildTimeline` above deliberately used the *capture's* info: every
+      // timestamp in the sidecar is in capture time, and the animation's own
+      // frame rate is a property of the file, not of the clock.
+      if (opts.animate) {
+        const enc = await encodeAnimation({
+          input: stopped.output,
+          output: opts.output,
+          format: opts.animate.format,
+          ...(opts.animate.fps !== undefined ? { fps: opts.animate.fps } : {}),
+          ...(opts.animate.width !== undefined ? { width: opts.animate.width } : {}),
+          ...(opts.animate.maxBytes !== undefined ? { maxBytes: opts.animate.maxBytes } : {}),
+          onLog: log,
+        });
+
+        if (!enc.withinBudget) {
+          const w =
+            `o ${opts.animate.format} ficou em ${(enc.bytes / 1024 / 1024).toFixed(1)} MB mesmo a ` +
+            `${enc.fps}fps, o mínimo da escala. Para caber: menos passos, texto mais curto, ` +
+            `ou --format webp (mede uma ordem de grandeza menor no mesmo clipe)`;
+          warnings.push(w);
+          log(`aviso: ${w}`);
+        }
+
+        await rm(stopped.output, { force: true }).catch(() => {
+          warnings.push(`não consegui apagar a captura intermediária ${stopped.output}`);
+        });
+
+        return {
+          output: opts.output,
+          bytes: enc.bytes,
+          steps,
+          cameraRung,
+          warnings,
+          video: await probeVideo(opts.output),
+          timeline: timelinePath,
+        };
+      }
+
+      // ── 6. a montagem, quando o pedido foi o Remotion ─────────────────────
+      //
+      // Depois do timeline e não antes: o EDL é construído A PARTIR dele. Toda a
+      // decisão de corte vem de `timeline.cuts` e `timeline.narration`, que só
+      // existem agora — é por isso que este passo não pode ser um pré-processo.
+      let remotion: RecordReport["remotion"];
+      if (mode === "remotion") {
+        remotion = await buildRemotionProject({
+          output: opts.output,
+          timeline,
+          clips,
+          title: sb.title,
+          open: opts.openStudio !== false,
+          log,
+          warn: (w) => {
+            warnings.push(w);
+            log(`aviso: ${w}`);
+          },
+        });
+      }
+
       return {
         output: stopped.output,
         bytes: finished.bytes,
@@ -438,6 +579,7 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
         warnings,
         video: finished.info,
         timeline: timelinePath,
+        ...(remotion ? { remotion } : {}),
       };
     }
     return { output: null, bytes: 0, steps, cameraRung, warnings };
@@ -451,6 +593,25 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
 
 /** Encoders reject odd dimensions; crop geometry must land on even numbers. */
 const even = (n: number): number => Math.max(2, Math.floor(n / 2) * 2);
+
+/**
+ * The overlay style for a preset.
+ *
+ * Extracted because `mount()` is called from two places — once after the initial
+ * `goto` and again after every `goto` *step* — and the second one used to pass no
+ * style at all. `mountOverlay` early-returns on an existing host, so on a fresh
+ * document (which is what a navigation produces) the styleless call rebuilt the
+ * whole overlay from `DEFAULT_STYLE`: after any navigation the balloon silently
+ * reverted to 17px and lost `avoidCursor`, which for silent output means the only
+ * channel to the viewer shrank mid-demo.
+ */
+function overlayStyleOf(preset: Preset): unknown {
+  return {
+    cursor: { ...preset.cursor, accent: preset.balloon.accent },
+    spotlight: { ...preset.spotlight, accent: preset.balloon.accent },
+    balloon: preset.balloon,
+  };
+}
 
 /**
  * The camera spring, as physical constants for the overlay to rebuild.
@@ -553,6 +714,7 @@ async function runStep(
   log: (s: string) => void,
   tl: TimelineRecorder,
   index: number,
+  caps: ModeCaps,
 ): Promise<void> {
   // ── aim ──────────────────────────────────────────────────────────────────
   if (step.target) {
@@ -607,12 +769,16 @@ async function runStep(
   }
 
   // ── narrate ──────────────────────────────────────────────────────────────
-  if (step.say) {
+  // Balloon off means the text has another renderer downstream, so it must not
+  // reach the dwell budget either: a reading allowance for text nobody displays
+  // would hold a frame for no reason.
+  const balloonText = caps.balloon ? balloonTextOf(step, caps.text) : undefined;
+  if (balloonText) {
     await page.evaluate(
       ([text, sel]) => window.__demovid!.say(text as string, (sel as string | undefined) ?? undefined),
-      [step.say, step.target] as const,
+      [balloonText, step.target] as const,
     );
-    tl.mark("balloon-show", { text: step.say }, index);
+    tl.mark("balloon-show", { text: balloonText }, index);
   }
 
   let audioMs = 0;
@@ -675,7 +841,12 @@ async function runStep(
       break;
     case "goto":
       await page.goto(step.value!, { waitUntil: "domcontentloaded", timeout: 30_000 });
-      await page.evaluate(() => window.__demovid?.mount());
+      // WITH the style. A navigation gives a fresh document, so this rebuilds the
+      // overlay from scratch — and a styleless rebuild fell back to DEFAULT_STYLE.
+      await page.evaluate(
+        (style) => window.__demovid?.mount(style),
+        overlayStyleOf(preset) as never,
+      );
       break;
     case "wait": {
       if (step.target) await locatorFor(page, step.target).waitFor({ state: "visible", timeout: 15_000 });
@@ -686,7 +857,12 @@ async function runStep(
   tl.end(act);
 
   // ── dwell ────────────────────────────────────────────────────────────────
-  const dwell = dwellFor(preset, audioMs, step.say ?? "");
+  //
+  // With `audioMs` at 0 — every silent step — `dwellFor` falls through to its
+  // text floors, which is what they were written for: `max(byWords, byReading)`.
+  // No separate silent-pacing path is needed, and adding one would be a second
+  // place for the two numbers to disagree.
+  const dwell = dwellFor(preset, audioMs, balloonText ?? "");
   const holdMs = Math.max(0, dwell - audioMs) + (step.holdMs ?? 0);
   if (holdMs > 0) {
     const wait = tl.mark("dwell", { reason: step.holdMs ? "holdMs" : "ritmo do preset", holdMs }, index);

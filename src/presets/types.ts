@@ -75,6 +75,24 @@ export interface BalloonPreset {
   shadow: string;
   /** `anchored` draws a tail at the target; `docked` pins to a corner with a connector. */
   placement: "anchored" | "docked-bottom-left" | "lower-third";
+  /**
+   * `backdrop-filter: blur()` behind the balloon, in px.
+   *
+   * Load-bearing whenever `bg` carries real alpha: transparency without blur
+   * puts the app's own text directly behind the caption, and two overlapping
+   * texts are unreadable at any contrast ratio. The blur turns whatever is
+   * behind into a field instead of competing glyphs.
+   */
+  backdropBlurPx: number;
+  /**
+   * Keep the balloon off the synthetic cursor as well as off the target.
+   *
+   * Only matters when the balloon is the sole channel — in a narrated video a
+   * cursor briefly behind a balloon costs nothing, because the voice carries the
+   * step anyway. In a silent GIF the same overlap hides the one thing the frame
+   * is about.
+   */
+  avoidCursor: boolean;
 }
 
 export interface PacingPreset {
