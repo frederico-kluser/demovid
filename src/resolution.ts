@@ -140,9 +140,11 @@ export function planCapture(target: ResolutionPreset, opts: PlanOptions): Captur
     // No X11 information at all. Honour the request literally and let the
     // window manager clamp — better than inventing a box out of nothing.
     warnings.push("não consegui ler os monitores — usando a resolução pedida sem verificar se cabe");
+    const fallbackX = opts.monitors[0]?.x ?? 0;
+    const fallbackY = opts.monitors[0]?.y ?? 0;
     return {
       target: { w: target.w, h: target.h },
-      window: { w: even(target.w), h: even(target.h), x: 0, y: 0 },
+      window: { w: even(target.w), h: even(target.h), x: fallbackX, y: fallbackY },
       deviceScaleFactor: 1,
       cssViewport: { w: target.cssWidth ?? target.w, h: 0 },
       mobile: target.mobile ?? false,

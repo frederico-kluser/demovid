@@ -30,6 +30,7 @@ import { writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { stringify as toYaml } from "yaml";
 import { launchBrowser } from "./browser.js";
+import { defaultWindowOrigin } from "./x11.js";
 import { allowedSelectors, crawlApp, serializeInventory } from "./project/inventory.js";
 import { ensureDevServer, type DevOverride } from "./project/devserver.js";
 import { hasGitRepo, scanProject, type ProjectScan } from "./project/scan.js";
@@ -225,7 +226,8 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
       config && config.startRoute && config.startRoute !== "/"
         ? new URL(config.startRoute, server.url).href
         : server.url;
-    const probe = await launchBrowser({ probe: true, width: 1440, height: 900 });
+    const origin = await defaultWindowOrigin();
+    const probe = await launchBrowser({ probe: true, width: 1440, height: 900, x: origin.x, y: origin.y });
     let inventory;
     try {
       inventory = await crawlApp({ page: probe.page, startUrl, scan, log });
