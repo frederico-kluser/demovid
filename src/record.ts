@@ -33,7 +33,7 @@ import type { CapturePlan } from "./resolution.js";
 import { splitSentences } from "./openai/tts.js";
 import { balloonTextOf, type Step, type Storyboard } from "./storyboard.js";
 import { buildTimeline, timelinePathFor, TimelineRecorder, writeTimeline } from "./timeline.js";
-import { parkPointer, windowGeometry } from "./x11.js";
+import { defaultWindowOrigin, parkPointer, windowGeometry } from "./x11.js";
 
 /** Clips are served to the page from disk over an intercepted virtual origin. */
 const CLIP_ORIGIN = "https://demovid.invalid";
@@ -251,11 +251,15 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
     log(`aviso: ${w}`);
   }
 
+  // When no capture plan provides position, default to the primary monitor's
+  // origin so the window is always visible — (0,0) is wrong on multi-monitor.
+  const origin = plan ? null : await defaultWindowOrigin();
+
   const browser = await launchBrowser({
     width: plan?.window.w ?? opts.width ?? 1600,
     height: plan?.window.h ?? opts.height ?? 1000,
-    ...(plan ? { x: plan.window.x } : opts.x !== undefined ? { x: opts.x } : {}),
-    ...(plan ? { y: plan.window.y } : opts.y !== undefined ? { y: opts.y } : {}),
+    x: plan?.window.x ?? opts.x ?? origin?.x ?? 0,
+    y: plan?.window.y ?? opts.y ?? origin?.y ?? 0,
     ...(plan ? { deviceScaleFactor: plan.deviceScaleFactor } : {}),
   });
   await serveClips(browser, clips);

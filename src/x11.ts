@@ -200,3 +200,18 @@ export function pickMonitor(monitors: Monitor[], name?: string): Monitor | null 
   if (name) return monitors.find((m) => m.name === name) ?? null;
   return monitors.find((m) => m.primary) ?? monitors[0] ?? null;
 }
+
+/**
+ * Safe default window position: the primary monitor's origin, or (0,0) when X11
+ * is unavailable.
+ *
+ * Every caller that opens a browser window should pass this when no explicit
+ * position is known, so a multi-monitor setup with a non-zero primary does not
+ * place the window off-screen.
+ */
+export async function defaultWindowOrigin(): Promise<{ x: number; y: number }> {
+  const monitors = await listMonitors().catch(() => []);
+  const primary = monitors.find((m) => m.primary) ?? monitors[0];
+  if (primary) return { x: primary.x, y: primary.y };
+  return { x: 0, y: 0 };
+}
