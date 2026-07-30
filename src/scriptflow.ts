@@ -120,6 +120,20 @@ async function configureProject(
   const { config, stale } = await readConfig(scan.dir, fp);
   if (config) {
     log(`configuração de ${CONFIG_FILE} (edite à mão se algo estiver errado)`);
+    // The fingerprint hashes MANIFESTS, so a demovid that learned to ask a new
+    // question does not invalidate anything: a config written before `readiness`
+    // existed parses cleanly, reports no loading indicators, and the feature is
+    // silently inert for exactly the projects already using the tool.
+    //
+    // Not auto-rediscovered — that would re-bill a fifteen-minute agent run on
+    // upgrade, for every cached project at once, without being asked. Saying so
+    // once is what turns an invisible gap into the operator's choice.
+    if (!config.readiness) {
+      log(
+        `${CONFIG_FILE} é de antes da descoberta de carregamentos — apague o arquivo ` +
+          `para o \`pi\` mapear spinners e operações lentas deste app`,
+      );
+    }
     return config;
   }
   if (stale) log(`${CONFIG_FILE} descreve outras dependências — vou descobrir de novo`);
