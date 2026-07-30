@@ -86,6 +86,14 @@ async function readJson(path: string): Promise<PackageJson | null> {
   }
 }
 
+/**
+ * File-only existence check. Uses `readFile`, which fails with `EISDIR` on
+ * directories — that is intentional here, because the callers wanted "is this a
+ * readable file", not "does this path exist".
+ *
+ * For directory checks (e.g. `.git`), use `access()` directly — `readFile` on
+ * a directory returns `false` here, which is the opposite of what you want.
+ */
 async function exists(path: string): Promise<boolean> {
   return readFile(path).then(
     () => true,
