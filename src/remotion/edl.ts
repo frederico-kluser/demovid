@@ -66,6 +66,20 @@ const MAX_TRANSITION_FRAMES = 9;
 /** A scene this short cannot hold a transition or a phrase. */
 const TINY_SCENE_MS = 1200;
 
+/** Where the impact phrase goes when the model did not say. */
+const DEFAULT_IMPACT_AT = 0.25;
+
+/**
+ * Frames an impact phrase needs on screen to be worth emitting.
+ *
+ * Derived from the renderer rather than from taste: `ImpactPhrase.tsx` staggers the
+ * words `WORD_STAGGER_FRAMES = 3` apart and enters each on a `damping: 200` spring
+ * that takes roughly 15 frames to settle, so a five-word phrase is not finished
+ * arriving until `4 * 3 + 15 = 27` frames. Anything shorter is a flash of
+ * half-animated words. Change the stagger in the template and change this with it.
+ */
+const MIN_IMPACT_FRAMES = 27;
+
 export interface EdlNarration {
   /** `audio/<hash>.mp3`, relative to the Remotion project's `public/`. */
   src: string;
@@ -153,6 +167,46 @@ export function transitionFrames(kind: TransitionKind, trimmed: boolean, fps: nu
   // Under three frames a transition is indistinguishable from a cut and still
   // costs the arithmetic.
   return frames >= 3 ? frames : 0;
+}
+
+/**
+ * Where the impact phrase sits inside its scene, or `null` for no phrase.
+ *
+ * The phrase has to dodge **both** crossfades, and they are at opposite ends.
+ * Measured on Remotion 4.0.501: in a `<TransitionSeries>` of a 45-frame sequence, a
+ * 9-frame transition and a 54-frame sequence, `useCurrentFrame()` inside the second
+ * sequence read **24 at absolute frame 60** — so that sequence's frame 0 sits at
+ * absolute 36, and the overlap is at the **start** of the incoming scene. A scene
+ * therefore loses its first `framesIn` frames to the transition it enters on and its
+ * last `framesOut` frames to its successor's.
+ *
+ * Exported because it is the only arithmetic here with two neighbours in it, and
+ * asserting it directly is much cheaper than asserting it through a whole EDL.
+ */
+export function placeImpact(opts: {
+  text: string | null | undefined;
+  /** 0–1, the model's requested position. */
+  atPercent: number;
+  durationInFrames: number;
+  /** True for a scene too short to hold text at all. */
+  tiny: boolean;
+  /** Frames lost at the START, to the transition this scene enters on. */
+  framesIn: number;
+  /** Frames lost at the END, to the NEXT scene's transition. */
+  framesOut: number;
+}): { text: string; atFrame: number; durationInFrames: number } | null {
+  const text = opts.text?.trim();
+  if (!text || opts.tiny) return null;
+
+  // The last frame the phrase may still be visible on.
+  const last = opts.durationInFrames - opts.framesOut;
+  if (last - opts.framesIn < MIN_IMPACT_FRAMES) return null;
+
+  const wanted = Math.round(opts.durationInFrames * opts.atPercent);
+  // Late is fine; too late is not. The phrase keeps its text and loses its timing —
+  // the model chose to caption this shot and only guessed at when.
+  const atFrame = Math.min(Math.max(wanted, opts.framesIn), last - MIN_IMPACT_FRAMES);
+  return { text, atFrame, durationInFrames: last - atFrame };
 }
 
 interface Boundary {
@@ -253,56 +307,67 @@ export function buildEdl(opts: BuildEdlOptions): Edl {
     trimmed[i + 1] = b.trimmed;
   }
 
-  // ── scenes ─────────────────────────────────────────────────────────────────
-  const scenes: EdlScene[] = steps.map((step, i) => {
+  // ── scene extents first, scenes second ─────────────────────────────────────
+  //
+  // Two passes and not one, because an impact phrase has to end before the NEXT
+  // scene's transition begins: scene `i` needs a number that belongs to scene
+  // `i + 1`. Everything in this pass depends only on index `i`, so `tFrames` — the
+  // cost of the transition a scene ENTERS on — is computed here too, and the second
+  // pass reads its successor's out of the same array.
+  const drafts = steps.map((step, i) => {
     const startMs = inMs[i] ?? step.startMs;
     const endMs = Math.max(startMs + 1, outMs[i] ?? step.endMs);
     const trimBefore = msToFrames(startMs, fps);
     const trimAfter = Math.max(trimBefore + 1, msToFrames(endMs, fps));
-    const durationInFrames = atLeastOneFrame(trimAfter - trimBefore);
-    const lengthMs = endMs - startMs;
-
     const edit = edits.get(step.index);
-    const tiny = lengthMs < TINY_SCENE_MS;
+    const tiny = endMs - startMs < TINY_SCENE_MS;
+    return {
+      step,
+      edit,
+      startMs,
+      trimBefore,
+      trimAfter,
+      durationInFrames: atLeastOneFrame(trimAfter - trimBefore),
+      tiny,
+      // Zero for a hard cut, and zero for a boundary with no handles to pay for one.
+      // Scene 0 lands here too: nothing was trimmed before it, so `trimmed[0]` is
+      // unset and `transitionFrames` declines — which is also why the opening scene
+      // needs no special case.
+      tFrames: tiny ? 0 : transitionFrames(edit?.transition ?? "corte", trimmed[i] ?? false, fps),
+    };
+  });
 
-    const tFrames = tiny ? 0 : transitionFrames(edit?.transition ?? "corte", trimmed[i] ?? false, fps);
+  const scenes: EdlScene[] = drafts.map((d, i) => {
+    const { step, edit } = d;
     const presentation = edit?.transition;
     const transitionIn: EdlTransition | null =
-      tFrames > 0 && presentation && presentation !== "corte"
-        ? { presentation, durationInFrames: tFrames }
+      d.tFrames > 0 && presentation && presentation !== "corte"
+        ? { presentation, durationInFrames: d.tFrames }
         : null;
 
-    const impactText = edit?.impact?.trim();
-    const impact =
-      impactText && !tiny
-        ? {
-            text: impactText,
-            atFrame: Math.min(
-              durationInFrames - 1,
-              Math.max(0, Math.round(durationInFrames * (edit?.impactAtPercent ?? 0.25))),
-            ),
-            // On screen for the rest of the scene, capped so it does not run under
-            // the outgoing transition.
-            durationInFrames: atLeastOneFrame(
-              durationInFrames -
-                Math.round(durationInFrames * (edit?.impactAtPercent ?? 0.25)) -
-                tFrames,
-            ),
-          }
-        : null;
+    const impact = placeImpact({
+      text: edit?.impact,
+      atPercent: edit?.impactAtPercent ?? DEFAULT_IMPACT_AT,
+      durationInFrames: d.durationInFrames,
+      tiny: d.tiny,
+      framesIn: d.tFrames,
+      // `undefined` past the end of the array, which is the right answer for the
+      // last scene: nothing transitions away from it.
+      framesOut: drafts[i + 1]?.tFrames ?? 0,
+    });
 
     return {
       id: `s${step.index}`,
       label: `${step.action}${step.target ? ` ${step.target}` : ""}`,
-      trimBefore,
-      trimAfter,
-      durationInFrames,
+      trimBefore: d.trimBefore,
+      trimAfter: d.trimAfter,
+      durationInFrames: d.durationInFrames,
       // Honoured only where the page's own camera stayed put: two zooms on the same
       // shot fight each other, and the in-page one has real resolution.
       kenBurns: edit?.kenBurns && cameraStatic.has(step.index) ? { from: 1, to: 1.06 } : null,
       narration: narrationOf(step.index).map((n) => ({
         src: `audio/${n.id}.mp3`,
-        atFrame: Math.max(0, msToFrames(n.startMs - startMs, fps)),
+        atFrame: Math.max(0, msToFrames(n.startMs - d.startMs, fps)),
         durationInFrames: atLeastOneFrame(msToFrames(n.endMs - n.startMs, fps)),
         text: n.text,
       })),
@@ -332,6 +397,41 @@ export function buildEdl(opts: BuildEdlOptions): Edl {
 }
 
 /**
+ * Frames scene `index`'s incoming transition removes from the total.
+ *
+ * The rule is **not** "a transition may not come first" — that is a widely repeated
+ * claim and it is false; the docs offer a leading `<Transition>` as the way to animate
+ * the first scene's entrance. The real rule is that `<TransitionSeries>` shortens by a
+ * transition only when it sits **between two sequences**, because the overlapped frames
+ * have to come from a predecessor and an edge transition has none.
+ *
+ * Measured: `Transition(15) · Sequence(60) · Transition(20) · Sequence(60)` laid out
+ * **100** frames — `60 + 60 − 20`, with the leading 15 costing nothing. Remotion clamps
+ * that case rather than rejecting it.
+ *
+ * So a transition on scene 0 is legal and free, but only while nothing precedes it,
+ * which here means no hook card. Subtracting it anyway would make the composition
+ * shorter than its content and silently cut the last frames off the end.
+ *
+ * demovid never emits one there — `transitionFrames` declines at scene 0 because
+ * nothing was trimmed before it, so there are no handles. This is for the EDL a human
+ * edited, which the README invites them to do.
+ *
+ * Note this answers a *different* question from `placeImpact`'s `framesIn`: what a
+ * transition COSTS the timeline and what it OVERLAPS on screen are not the same number.
+ * A free leading transition still covers the scene's first frames.
+ *
+ * `templates/remotion/src/edl.ts` has this function too, under the same name.
+ * `test/remotion-template.test.ts` asserts the two agree; if you change one, change both.
+ */
+export function transitionCostAt(edl: Pick<Edl, "hook" | "scenes">, index: number): number {
+  const t = edl.scenes[index]?.transitionIn;
+  if (!t) return 0;
+  if (index === 0 && !edl.hook) return 0;
+  return t.durationInFrames;
+}
+
+/**
  * Total length of the composition, in frames.
  *
  * Mirrors `TransitionSeries`' own arithmetic — `ΣSequences − ΣTransitions` — because
@@ -343,6 +443,6 @@ export function edlDurationInFrames(edl: Edl): number {
     (edl.hook?.durationInFrames ?? 0) +
     edl.scenes.reduce((n, s) => n + s.durationInFrames, 0) +
     (edl.endCard?.durationInFrames ?? 0);
-  const transitions = edl.scenes.reduce((n, s) => n + (s.transitionIn?.durationInFrames ?? 0), 0);
+  const transitions = edl.scenes.reduce((n, _s, i) => n + transitionCostAt(edl, i), 0);
   return atLeastOneFrame(sequences - transitions);
 }

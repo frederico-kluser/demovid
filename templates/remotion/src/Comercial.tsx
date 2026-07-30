@@ -21,6 +21,16 @@ import type { Edl, EdlTransition } from "./edl";
  * ships each presentation as its own entry point, so a name the EDL invented would
  * be an unresolvable import at bundle time rather than a value that is merely
  * missing at runtime.
+ *
+ * `linearTiming` and not `springTiming`: a spring-timed crossfade spends part of its
+ * budget easing, so the two shots are both half-visible for longer than the frame
+ * count suggests. demovid sizes transitions against the silence it reserved at the
+ * cut (320 ms), and a linear ramp is the one whose visible length equals the number
+ * that was budgeted.
+ *
+ * Returns `null` for a presentation this renderer cannot draw, so an EDL edited by
+ * hand degrades to a cut instead of putting `undefined` into `<TransitionSeries>`'s
+ * children, where it becomes an error about child pairing that names nothing useful.
  */
 function transition(key: string, t: EdlTransition): React.ReactNode {
   const timing = linearTiming({ durationInFrames: t.durationInFrames });
@@ -31,6 +41,8 @@ function transition(key: string, t: EdlTransition): React.ReactNode {
       return <TransitionSeries.Transition key={key} timing={timing} presentation={slide()} />;
     case "wipe":
       return <TransitionSeries.Transition key={key} timing={timing} presentation={wipe()} />;
+    default:
+      return null;
   }
 }
 
@@ -54,10 +66,12 @@ export const Comercial: React.FC<Edl> = (edl) => {
   }
 
   for (const scene of edl.scenes) {
-    // A Transition can never be the first child — there would be nothing to
-    // transition from. demovid never emits one for the opening scene, and this
-    // guard makes a hand-edited EDL fail soft instead of throwing in the Studio.
-    if (scene.transitionIn && children.length > 0) {
+    // Emitted whenever the EDL asks for one — including on the opening scene, where a
+    // leading `<Transition>` is legal and animates that scene's entrance. Whether it
+    // also SHORTENS the timeline is a separate question with a separate owner
+    // (`transitionCostAt`, used by `totalFrames`), and it does not when nothing
+    // precedes it. Guarding here as well is what once made the two disagree.
+    if (scene.transitionIn) {
       children.push(transition(`${scene.id}-in`, scene.transitionIn));
     }
     children.push(

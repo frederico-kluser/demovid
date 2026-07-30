@@ -68,6 +68,28 @@ export type Edl = {
 };
 
 /**
+ * Frames scene `index`'s incoming transition removes from the total.
+ *
+ * `<TransitionSeries>` shortens by a transition only when it sits **between two
+ * sequences**: the overlapped frames come out of a predecessor, and an edge transition
+ * has none. It is perfectly legal to open the series with a `<Transition>` — that is
+ * the documented way to animate the first scene's entrance — it simply costs nothing.
+ *
+ * Measured: `Transition(15) · Sequence(60) · Transition(20) · Sequence(60)` laid out
+ * **100** frames, which is `60 + 60 − 20`. The leading 15 were free.
+ *
+ * So `Comercial.tsx` renders whatever the EDL asks for, and this function is the only
+ * thing that decides what `totalFrames` subtracts. Subtracting a free transition would
+ * make the composition shorter than its content and cut the end off the last scene.
+ */
+export function transitionCostAt(edl: Edl, index: number): number {
+  const t = edl.scenes[index]?.transitionIn;
+  if (!t) return 0;
+  if (index === 0 && !edl.hook) return 0;
+  return t.durationInFrames;
+}
+
+/**
  * Total length of the composition.
  *
  * This is `<TransitionSeries>`' own contract — `Total = ΣSequences − ΣTransitions`,
@@ -83,6 +105,6 @@ export function totalFrames(edl: Edl): number {
     (edl.hook?.durationInFrames ?? 0) +
     edl.scenes.reduce((n, s) => n + s.durationInFrames, 0) +
     (edl.endCard?.durationInFrames ?? 0);
-  const transitions = edl.scenes.reduce((n, s) => n + (s.transitionIn?.durationInFrames ?? 0), 0);
+  const transitions = edl.scenes.reduce((n, _s, i) => n + transitionCostAt(edl, i), 0);
   return Math.max(1, sequences - transitions);
 }

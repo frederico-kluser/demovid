@@ -9,7 +9,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Commercial } from "../src/openai/commercial.js";
-import { buildEdl, edlDurationInFrames, HANDLE_MS, transitionFrames } from "../src/remotion/edl.js";
+import {
+  buildEdl,
+  edlDurationInFrames,
+  HANDLE_MS,
+  placeImpact,
+  transitionCostAt,
+  transitionFrames,
+} from "../src/remotion/edl.js";
 import { TIMELINE_FORMAT, TIMELINE_VERSION, type CutPoint, type NarrationSpan, type Timeline, type TimelineEvent } from "../src/timeline.js";
 
 const FPS = 30;
@@ -395,4 +402,91 @@ test("CommercialSchema aceita o que stripNulls entrega, não o que o modelo emit
 
   // E o `null` cru também passa, para um EDL editado à mão.
   assert.ok(CommercialSchema.safeParse(fromApi).success);
+});
+
+test("a cena de abertura nunca recebe transição, mesmo se o modelo pedir", () => {
+  // Não por um caso especial: nada foi cortado ANTES da cena 0, então ela não tem
+  // handle, e `transitionFrames` recusa por falta de silêncio para sobrepor. É a
+  // mesma regra que vale para qualquer fronteira, aplicada na primeira.
+  const edl = buildEdl({
+    timeline: timeline({ ...TWO_STEPS, cuts: [4000] }),
+    videoSrc: "demo.mp4",
+    fps: FPS,
+    commercial: commercial({
+      scenes: [
+        { index: 0, transition: "fade", impactAtPercent: 0.2, impact: null, kenBurns: false },
+        { index: 1, transition: "fade", impactAtPercent: 0.2, impact: null, kenBurns: false },
+      ],
+    }),
+  });
+  assert.equal(edl.scenes[0]?.transitionIn, null, "a abertura pediu fade e tem de sair sem transição");
+  assert.ok(edl.scenes[1]?.transitionIn, "e a segunda cena continua podendo ter");
+});
+
+test("a frase de impacto sai de cena ANTES da transição da cena seguinte", () => {
+  // Este é o bug que o comentário antigo dizia estar resolvido e não estava: a cena
+  // subtraía a transição em que ela ENTRA, não a da sucessora. Medido no Remotion
+  // 4.0.501, a sobreposição fica no INÍCIO da cena que entra — então a cena `i`
+  // perde os primeiros frames para a própria transição e os ÚLTIMOS para a de `i+1`.
+  const tOut = transitionFrames("fade", true, FPS);
+  assert.ok(tOut > 0, "a fixture precisa de uma transição real para ter o que medir");
+
+  const edl = buildEdl({
+    timeline: timeline({ ...TWO_STEPS, cuts: [4000] }),
+    videoSrc: "demo.mp4",
+    fps: FPS,
+    commercial: commercial({
+      scenes: [
+        // A cena 0 entra em corte seco e sai para o `fade` da cena 1.
+        { index: 0, transition: "corte", impactAtPercent: 0.2, impact: "duas palavras", kenBurns: false },
+        { index: 1, transition: "fade", impactAtPercent: 0.2, impact: null, kenBurns: false },
+      ],
+    }),
+  });
+
+  const s0 = edl.scenes[0];
+  const impact = s0?.impact;
+  assert.ok(s0 && impact, "a cena 0 é longa e tem de manter a frase");
+  assert.equal(
+    impact.atFrame + impact.durationInFrames,
+    s0.durationInFrames - tOut,
+    "a frase tem de terminar exatamente onde a transição da cena 1 começa",
+  );
+});
+
+test("placeImpact respeita as duas transições e recusa quando não sobra tempo de leitura", () => {
+  const base = { text: "duas palavras", atPercent: 0.25, tiny: false } as const;
+
+  // Cedo demais: a frase não pode nascer debaixo do crossfade de entrada.
+  const early = placeImpact({ ...base, atPercent: 0, durationInFrames: 120, framesIn: 9, framesOut: 9 });
+  assert.equal(early?.atFrame, 9, "atFrame tem de ser empurrado para depois da transição de entrada");
+  assert.equal(early.atFrame + early.durationInFrames, 111, "e terminar antes da de saída");
+
+  // Tarde demais: mantém o texto e perde o horário, em vez de virar um flash.
+  const late = placeImpact({ ...base, atPercent: 0.9, durationInFrames: 120, framesIn: 0, framesOut: 0 });
+  assert.ok(late, "0.9 é um horário ruim, não um motivo para jogar o texto fora");
+  assert.ok(late.durationInFrames >= 27, `frase de ${late.durationInFrames} frames é ilegível`);
+
+  // Sem espaço nenhum: aí sim recusa.
+  assert.equal(placeImpact({ ...base, durationInFrames: 30, framesIn: 9, framesOut: 9 }), null);
+  // E uma cena marcada como curtíssima nunca recebe texto.
+  assert.equal(placeImpact({ ...base, durationInFrames: 300, tiny: true, framesIn: 0, framesOut: 0 }), null);
+});
+
+test("a conta da duração ignora a transição de borda, que é grátis", () => {
+  // `<TransitionSeries>` só encurta por transição que fica ENTRE duas sequências: os
+  // frames sobrepostos saem de uma antecessora, e uma transição de borda não tem.
+  // Medido: Transition(15)·Sequence(60)·Transition(20)·Sequence(60) rendeu 100 frames
+  // = 60+60−20, com os 15 da frente de graça. Abrir com transição é legal (é como se
+  // anima a entrada da primeira cena) — só não custa nada. Subtrair de qualquer jeito
+  // deixaria a composição mais curta que o conteúdo e cortaria o fim da última cena.
+  const scene = { durationInFrames: 90, transitionIn: { presentation: "fade" as const, durationInFrames: 9 } };
+  const scenes = [scene, { ...scene }] as never;
+
+  const withHook = { hook: { text: "g", sub: null, durationInFrames: 60 }, scenes } as never;
+  const noHook = { hook: null, scenes } as never;
+
+  assert.equal(transitionCostAt(withHook, 0), 9, "com gancho, a cena 0 pode ter transição");
+  assert.equal(transitionCostAt(noHook, 0), 0, "sem gancho, a cena 0 é o primeiro filho");
+  assert.equal(transitionCostAt(noHook, 1), 9, "a segunda cena sempre pode");
 });
