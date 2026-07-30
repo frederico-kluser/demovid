@@ -1,0 +1,100 @@
+{
+  "description": "Carries the measured constraints of the Remotion project demovid generates — why sizes come from `useVideoConfig()` and never from `vh`, which clock `useCurrentFrame`/`useVideoConfig` report inside a `<Sequence>`, which end of a scene a `<TransitionSeries>` crossfade actually eats, and the render settings whose defaults are wrong for a screen recording. Use whenever you touch `templates/remotion/**`, restyle a component, add a composition or a prop, tune `remotion.config.ts`, upgrade Remotion, or debug a Studio preview that disagrees with the rendered MP4, text at the wrong size, a black frame at the end, or a caption sitting under a crossfade. This template is React that demovid never compiles, so a green typecheck proves nothing about it.",
+  "verification_signal": "npm test",
+  "routing": {
+    "must_trigger": [
+      "the Studio preview shows the title at a different size than the rendered mp4",
+      "restyle a component in the generated Remotion project",
+      "upgrade Remotion in the generated project template",
+      "tune remotion.config.ts for a sharper render"
+    ],
+    "must_not_trigger": [
+      "a cut clipped the last word of a spoken sentence",
+      "the recorder was left capturing after a crash",
+      "add a new voice preset for narration"
+    ]
+  },
+  "claims": [
+    {
+      "assert": "code-lacks",
+      "path": "templates/remotion/src/components/Hook.tsx",
+      "needle": "vh\"",
+      "why": "unidade de viewport mede a JANELA no Studio, não a composição: 20vh deu 180px numa janela de 900px contra os 144px do render"
+    },
+    {
+      "assert": "code-contains",
+      "path": "templates/remotion/src/components/Hook.tsx",
+      "needle": "height * 0.075",
+      "why": "a forma positiva: tamanho derivado de useVideoConfig().height"
+    },
+    {
+      "assert": "code-contains",
+      "path": "templates/remotion/src/edl.ts",
+      "needle": "export function transitionCostAt",
+      "why": "dono único do que a duração SUBTRAI: só a transição que fica entre duas sequências custa frames"
+    },
+    {
+      "assert": "code-lacks",
+      "path": "templates/remotion/src/Comercial.tsx",
+      "needle": "transitionCostAt",
+      "why": "o renderizador emite a transição que o EDL pedir, inclusive na cena de abertura: abrir com <Transition> é legal e anima a entrada. Só a conta da duração tem regra, e ela vive em edl.ts"
+    },
+    {
+      "assert": "code-contains",
+      "path": "templates/remotion/src/edl.ts",
+      "needle": "index === 0 && !edl.hook",
+      "why": "a regra real: só encurta a transição que fica ENTRE duas sequências — medido, Transition(15)·Seq(60)·Transition(20)·Seq(60) rendeu 100 frames"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/remotion/edl.ts",
+      "needle": "export function placeImpact",
+      "why": "a frase de impacto tem de esquivar das DUAS transições, e a sobreposição fica no início da cena que entra"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/remotion/edl.ts",
+      "needle": "drafts[i + 1]?.tFrames",
+      "why": "framesOut vem da SUCESSORA; a versão anterior subtraía a transição de entrada da própria cena — a ponta errada"
+    },
+    {
+      "assert": "code-contains",
+      "path": "templates/remotion/remotion.config.ts",
+      "needle": "setColorSpace(\"bt709\")",
+      "why": "o default do Remotion 4 é bt601 e desde 4.0.83 ele converte de verdade, deslocando as cores de uma captura sRGB"
+    },
+    {
+      "assert": "code-contains",
+      "path": "templates/remotion/remotion.config.ts",
+      "needle": "setVideoImageFormat(\"png\")",
+      "why": "medido: jpeg 261KB vs png 209KB no mesmo render, porque a fonte é texto de interface e o JPEG intermediário cria artefato que o h264 depois gasta bits reproduzindo"
+    },
+    {
+      "assert": "code-contains",
+      "path": "templates/remotion/src/components/Scene.tsx",
+      "needle": "trimBefore",
+      "why": "nome atual do prop (4.0.319+), e são frames ABSOLUTOS no source"
+    },
+    {
+      "assert": "file-contains",
+      "path": "templates/remotion/src/edl.ts",
+      "needle": "A `type`, not an `interface`",
+      "why": "<Composition> exige Record<string, unknown>, e só um type alias recebe index signature implícita"
+    },
+    {
+      "assert": "file-exists",
+      "path": "test/remotion-template.test.ts",
+      "why": "o único sinal dentro de npm test para as duas falhas que sobrevivem a um render verde"
+    },
+    {
+      "assert": "npm-script",
+      "name": "test:remotion",
+      "why": "o e2e que compila e renderiza o projeto gerado"
+    },
+    {
+      "assert": "npm-script",
+      "name": "test",
+      "why": "declared verification signal"
+    }
+  ]
+}

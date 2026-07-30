@@ -31,9 +31,21 @@ Explains demovid's layer map, the one-pass invariant, and which module owns what
 
 ## Task — load with the work
 
+### `authoring-commercial-edits`
+
+Carries how demovid turns a finished take into a commercial edit — the model call that writes the hook, transitions and impact phrases against MEASURED scene durations, and the rules that translate `.timeline.json` into the frame-accurate EDL a Remotion composition renders. Use whenever you touch src/openai/commercial.ts or src/remotion/edl.ts, change how scenes are cut or how dead air is trimmed, add a transition kind, tune the impact-phrase prompt, or debug a cut that clips a word, a caption on the wrong shot, or a composition whose length disagrees with its content. The cut decisions come from two different arrays for two different reasons, and mixing them up is the only real bug available here.
+
+*Verified by:* `npm test`
+
 ### `authoring-storyboards-and-presets`
 
 Explains why demovid validates a storyboard with a hand-written JSON Schema AND a zod schema, which JSON Schema keywords are forbidden under strict mode, and how the preset and locale layers compose. Use whenever you add or change a storyboard action, edit src/storyboard.ts or anything under src/presets/, add a preset or locale, tune pacing or dwell time, or debug a hard 400 from the OpenAI Structured Outputs API. Also use before adding any field to a preset, because unread preset fields already exist in this repo and adding another teaches future readers that they work.
+
+*Verified by:* `npm test`
+
+### `composing-remotion-videos`
+
+Carries the measured constraints of the Remotion project demovid generates — why sizes come from `useVideoConfig()` and never from `vh`, which clock `useCurrentFrame`/`useVideoConfig` report inside a `<Sequence>`, which end of a scene a `<TransitionSeries>` crossfade actually eats, and the render settings whose defaults are wrong for a screen recording. Use whenever you touch `templates/remotion/**`, restyle a component, add a composition or a prop, tune `remotion.config.ts`, upgrade Remotion, or debug a Studio preview that disagrees with the rendered MP4, text at the wrong size, a black frame at the end, or a caption sitting under a crossfade. This template is React that demovid never compiles, so a green typecheck proves nothing about it.
 
 *Verified by:* `npm test`
 
@@ -48,6 +60,12 @@ Carries the process and signal semantics of the recorder child, the two backends
 Drives the demovid CLI end to end to produce a narrated demo video of a frontend project, from environment check through storyboard to MP4. Use whenever the request is to record, produce or regenerate a demo video, a walkthrough, a release clip or a screen demonstration of a web app — including "grave um demo do app X" — and whenever a demo video must be re-recorded after the UI changed. This is about operating the tool, not developing it; for changes to demovid's own code, use the domain skills instead.
 
 *Verified by:* `npm run dev -- doctor`
+
+### `scripting-product-demos`
+
+The craft of the WORDS in a demovid demo — the two model calls that write prose, why narration is composed for the ear instead of the page, how many words actually fit in a shot of a given length, how many steps a demo should have, and what the opening and closing lines have to accomplish. Use whenever you edit the storyboard or commercial prompt in `src/openai/script.ts` or `src/openai/commercial.ts`, tune a preset's `targetWpm` or step count, write or review a `say`/`caption`/`impact`/hook line, or judge a demo that is accurate but boring, too long, reads like a manual, or narrated at a speed no viewer can follow. This is about prose and pacing, not about JSON Schema mechanics or where the cuts land.
+
+*Verified by:* `npm test`
 
 ### `synthesizing-narration`
 

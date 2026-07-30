@@ -60,9 +60,24 @@ Ordering rules, from `.agents/bootstrap/skill-map.md`:
 
 - `understanding-demovid-architecture` **first** on anything touching more than one module.
 - `following-typescript-conventions` on any `.ts` edit, in parallel with the domain skill.
-- The four domain skills are independent and may load in parallel.
+- The domain skills are independent and may load in parallel.
 - `testing-demovid` **after** the domain skill, when the change needs a test.
 - `meta-skill-evolution` **last, always**.
+
+Two pairs are easy to route to the wrong half, because in each case one skill decides
+something and the other consumes it:
+
+- **The edit vs. the renderer.** `authoring-commercial-edits` owns *what* the cut is —
+  where a boundary may be trimmed, how long a transition may be, which scene gets a
+  phrase. `composing-remotion-videos` owns *what the generated project does with it*.
+  A change that crosses the seam loads the deciding skill first, because the renderer's
+  constraints are what the decision has to satisfy. A symptom in the Studio that does
+  not appear in the rendered MP4 is always the second one.
+- **The words vs. the schema.** `scripting-product-demos` owns the prose the model is
+  asked to write — narration, captions, the hook, step count, pacing.
+  `authoring-storyboards-and-presets` owns the shape it must come back in. They load in
+  parallel on a prompt change, because the `required` order in the schema is itself a
+  prose-quality mechanism, and editing either alone is how the two drift.
 
 Use isolated-context subagents for genuinely separable, context-heavy investigation, and have them
 return short summaries rather than file contents.

@@ -110,11 +110,23 @@ Reading rules:
   is the map; the others are the territory.
 - **`following-typescript-conventions` loads on any `.ts` edit**, in parallel with a domain skill —
   they do not depend on each other.
-- The four domain skills are **mutually independent** and may load in parallel.
+- The domain skills are **mutually independent** and may load in parallel. (This said "the four"
+  while the catalog listed four; the count is now maintained in `catalog.md`, which is generated, so
+  it cannot go stale the way a number in prose does.)
 - **`testing-demovid` loads after** a domain skill when the change needs a test, because what a test
   may assume depends on which layer changed.
 - **`meta-skill-evolution` runs last, always**, and is the only path to a persisted skill update.
 - `running-demo-recordings` is a **leaf**: operating the CLI pulls in nothing else.
+
+Two later additions are **pairs across a seam**, where one skill decides something and the other
+consumes it. Ordering matters within each pair, and `project-router` step 5 states it:
+
+- `authoring-commercial-edits` (what the cut IS) before `composing-remotion-videos` (what the
+  generated project DOES with it). A symptom visible in the Studio but not in the rendered MP4 is
+  always the second.
+- `scripting-product-demos` (the prose) in parallel with `authoring-storyboards-and-presets` (the
+  shape it must return in) — the schema's `required` order is itself a prose-quality mechanism, so
+  editing one alone is how the two drift.
 
 ## What is deliberately NOT a skill
 
