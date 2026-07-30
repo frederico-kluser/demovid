@@ -1,0 +1,73 @@
+{
+  "description": "The craft of the WORDS in a demovid demo — the two model calls that write prose, why narration is composed for the ear instead of the page, how many words actually fit in a shot of a given length, how many steps a demo should have, and what the opening and closing lines have to accomplish. Use whenever you edit the storyboard or commercial prompt in `src/openai/script.ts` or `src/openai/commercial.ts`, tune a preset's `targetWpm` or step count, write or review a `say`/`caption`/`impact`/hook line, or judge a demo that is accurate but boring, too long, reads like a manual, or narrated at a speed no viewer can follow. This is about prose and pacing, not about JSON Schema mechanics or where the cuts land.",
+  "verification_signal": "npm test",
+  "routing": {
+    "must_trigger": [
+      "the narration reads like written prose instead of speech",
+      "how many spoken words fit in a three second shot",
+      "the demo is accurate but boring and too long",
+      "rewrite the opening line so it states the benefit"
+    ],
+    "must_not_trigger": [
+      "the Studio preview shows the title at a different size than the rendered mp4",
+      "a hard 400 from the Structured Outputs API on a storyboard",
+      "the recorder was left capturing after a crash",
+      "regenerate the baked spring easing curves"
+    ]
+  },
+  "claims": [
+    {
+      "assert": "file-contains",
+      "path": "src/openai/script.ts",
+      "needle": "spoken Portuguese, not written Portuguese",
+      "why": "a regra central: a narração é composta para o ouvido, e o prompt diz isso explicitamente"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/openai/script.ts",
+      "needle": "Prefer 5 to 9 steps",
+      "why": "o comprimento é uma regra do prompt, não gosto: menos de 4 não é demo, mais de 12 é manual"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/openai/script.ts",
+      "needle": "Start with a \"wait\" step",
+      "why": "a abertura tem um movimento definido: apresentar o app enquanto a primeira frase toca"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/openai/script.ts",
+      "needle": "the viewer may start reading mid-loop",
+      "why": "caption do modo silencioso é outro campo com outro trabalho — lido a frio, possivelmente do meio do loop"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/openai/commercial.ts",
+      "needle": "NEVER repeat what the narration already says",
+      "why": "voz e texto são dois canais; dizer a mesma coisa duas vezes desperdiça os dois"
+    },
+    {
+      "assert": "file-contains",
+      "path": "src/openai/commercial.ts",
+      "needle": "Diz o benefício, não o nome da tela",
+      "why": "a regra de copy do gancho, no lugar onde o modelo a lê"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/presets/comercial.ts",
+      "needle": "targetWpm: 165",
+      "why": "o ritmo do preset comercial é o número de onde sai a aritmética palavras-por-segundo"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/openai/tts.ts",
+      "needle": "WPM_CEILING = 140",
+      "why": "o teto acima do qual instructions satura — o limite que separa ritmo pedido de ritmo entregue"
+    },
+    {
+      "assert": "npm-script",
+      "name": "test",
+      "why": "declared verification signal"
+    }
+  ]
+}

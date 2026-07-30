@@ -17,7 +17,7 @@
  *    `.demovid-cache/` breaks both, and Remotion's bundler would refuse to follow it
  *    out of the project root anyway.
  */
-import { copyFile, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Clip } from "../openai/tts.js";
@@ -96,8 +96,10 @@ export async function scaffoldRemotion(opts: ScaffoldOptions): Promise<ScaffoldR
 
   log(`projeto Remotion em ${dir} (${opts.edl.scenes.length} cena(s), ${copied} clipe(s) de narração)`);
 
-  const installed = await readFile(join(dir, "node_modules", ".package-lock.json"), "utf8").then(
-    () => true,
+  // `stat`, not `readFile`: npm's tree lockfile is megabytes on a Remotion install
+  // and the question is only whether it exists.
+  const installed = await stat(join(dir, "node_modules", ".package-lock.json")).then(
+    (s) => s.size > 0,
     () => false,
   );
 

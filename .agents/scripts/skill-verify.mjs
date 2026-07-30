@@ -40,10 +40,24 @@ const TOKEN = join(SKILLS, ".validation-token.json");
 /** Long enough to write a considered edit, short enough that it cannot be banked. */
 const TTL_MS = 30 * 60 * 1000;
 
+/**
+ * Read a skill, tolerating one that does not exist yet.
+ *
+ * `meta-skill-evolution` documents proposing a NEW skill, and the write gate blocks
+ * `SKILL.md` unless a token exists for it — so a new skill needs a token before it has
+ * a file. This used to throw a raw ENOENT stack, which made the documented workflow
+ * unrunnable and looked like a crash rather than a rule.
+ *
+ * A missing skill is a state, not an error. What can still be verified for one is
+ * verified (see {@link verify}); `missing` is what tells the caller which mode it is
+ * in, so the token can record it honestly instead of implying a lint that never ran.
+ */
 const readSkill = (name) => {
-  const raw = readFileSync(join(SKILLS, name, "SKILL.md"), "utf8");
+  const f = join(SKILLS, name, "SKILL.md");
+  if (!existsSync(f)) return { fm: null, body: "", raw: "", missing: true };
+  const raw = readFileSync(f, "utf8");
   const m = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(raw);
-  return { fm: m ? parseYaml(m[1]) : {}, body: m ? m[2] : raw, raw };
+  return { fm: m ? parseYaml(m[1]) : {}, body: m ? m[2] : raw, raw, missing: false };
 };
 
 const readEval = (name) => {
@@ -229,12 +243,26 @@ function checkSignal(signal) {
 }
 
 function verify(name, allSkills, { runSignal }) {
-  const { fm } = readSkill(name);
+  const { fm, missing } = readSkill(name);
   const spec = readEval(name);
   const results = [];
 
-  const lint = lintSkill(name);
-  results.push({ group: "lint", ok: lint.errors.length === 0, items: lint.errors.map((e) => ({ ok: false, detail: e })) });
+  // A skill that does not exist yet cannot be linted — there is no prose to lint. The
+  // rest of the pipeline still applies, and for a NEW skill it is the part that
+  // matters: the claims prove the assertions it is about to make resolve against this
+  // repository, and the routing check proves its description does not collide with a
+  // skill already in the catalog. Lint runs on the SECOND, post-write verification,
+  // which promote-or-discard requires anyway.
+  if (missing) {
+    results.push({
+      group: "lint",
+      ok: true,
+      items: [{ ok: true, soft: true, detail: "SKILL.md does not exist yet — new skill; lint runs on the post-write verification" }],
+    });
+  } else {
+    const lint = lintSkill(name);
+    results.push({ group: "lint", ok: lint.errors.length === 0, items: lint.errors.map((e) => ({ ok: false, detail: e })) });
+  }
 
   if (!spec) {
     results.push({ group: "eval", ok: false, items: [{ ok: false, detail: "no eval.json — a skill with no eval cannot be gated" }] });
@@ -246,11 +274,13 @@ function verify(name, allSkills, { runSignal }) {
   }
 
   if (runSignal) {
-    const sig = checkSignal(fm?.metadata?.verification_signal);
+    // For a new skill the signal is declared in eval.json, because the frontmatter
+    // that will carry it does not exist yet.
+    const sig = checkSignal(fm?.metadata?.verification_signal ?? spec?.verification_signal);
     results.push({ group: "signal", ok: sig.ok, items: [sig] });
   }
 
-  return { name, results, ok: results.every((r) => r.ok) };
+  return { name, results, ok: results.every((r) => r.ok), missing };
 }
 
 // ── cli ────────────────────────────────────────────────────────────────────
@@ -269,11 +299,25 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     return { name: n, description: fm?.description ?? "" };
   });
 
+  // A skill being proposed is not in `listSkills()` yet — it has no SKILL.md. Its
+  // description has to join the field anyway or the routing check is rigged: every
+  // `must_trigger` query would resolve to some existing skill and fail, and the one
+  // thing worth checking about a new skill — that it does not collide with the
+  // catalog — would never be checked. The proposed description lives in eval.json
+  // until the frontmatter exists to hold it.
+  if (only && !names.includes(only)) {
+    const proposed = readEval(only)?.description;
+    if (proposed) allSkills.push({ name: only, description: proposed });
+  }
+
   const targets = all ? names : only ? [only] : [];
   if (targets.length === 0) {
     console.error("usage: skill-verify.mjs <skill> [--intent \"…\"] [--signal]  |  --all");
     process.exit(1);
   }
+
+  /** No file yet means no hash to attest to. Recorded as null rather than faked. */
+  const hashOf = (name) => (readSkill(name).missing ? null : skillHash(name));
 
   let failed = 0;
   const failureDetail = [];
@@ -310,7 +354,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       JSON.stringify(
         {
           skill: targets[0],
-          hash_at_verify: skillHash(targets[0]),
+          hash_at_verify: hashOf(targets[0]),
           intent: intent ?? "repair",
           mode: "repair",
           repairing: failureDetail,
@@ -331,14 +375,19 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   if (!all) {
     const name = targets[0];
+    const { fm, missing } = readSkill(name);
     writeFileSync(
       TOKEN,
       JSON.stringify(
         {
           skill: name,
-          hash_at_verify: skillHash(name),
+          hash_at_verify: hashOf(name),
           intent: intent ?? null,
-          signal: readSkill(name).fm?.metadata?.verification_signal ?? null,
+          // "new" is not a weaker gate, it is an honest label: lint had no file to
+          // read, so the token must not imply it passed. Promote-or-discard closes the
+          // gap — the post-write run lints for real and a red one reverts the write.
+          ...(missing ? { mode: "new" } : {}),
+          signal: fm?.metadata?.verification_signal ?? readEval(name)?.verification_signal ?? null,
           issued_at: new Date().toISOString(),
           expires_at: new Date(Date.now() + TTL_MS).toISOString(),
         },
