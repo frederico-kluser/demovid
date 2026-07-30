@@ -21,12 +21,12 @@ import { stringify as toYaml } from "yaml";
 import { launchBrowser } from "./browser.js";
 import { allowedSelectors, crawlApp, serializeInventory } from "./project/inventory.js";
 import { ensureDevServer } from "./project/devserver.js";
-import { scanProject } from "./project/scan.js";
+import { hasGitRepo, scanProject } from "./project/scan.js";
 import { refineStoryboard, writeStoryboard } from "./openai/script.js";
-import { askRequired, closePrompt, gate, isInteractive } from "./prompt.js";
+import { ask, askRequired, closePrompt, gate, isInteractive } from "./prompt.js";
 import { record, type RecordOptions, type RecordReport } from "./record.js";
 import { restore, readJournal } from "./annotate.js";
-import { extensionFor, MODE_CAPS } from "./output-mode.js";
+import { extensionFor, MODE_CAPS, type OutputMode } from "./output-mode.js";
 import type { Storyboard } from "./storyboard.js";
 import type { Voice } from "./openai/tts.js";
 
@@ -82,7 +82,17 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
     for (const c of r.conflicts) log(`conflito: ${c}`);
   }
 
-  const scan = await scanProject(dir);
+  // ── o projeto existe? ──────────────────────────────────────────────────
+  const [isGit, scan] = await Promise.all([hasGitRepo(dir), scanProject(dir)]);
+  if (!isGit) {
+    log("não achei repositório git aqui. Rode dentro de um projeto com git.");
+    return 1;
+  }
+  if (!scan.hasPkg) {
+    log("não achei package.json. Rode dentro de um projeto frontend.");
+    return 1;
+  }
+
   log(`projeto: ${scan.name} · ${scan.framework} · ${scan.packageManager}`);
   for (const n of scan.notes) log(`  ${n}`);
 
@@ -117,16 +127,42 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
         "descreva a demo em uma ou duas frases.",
       ));
 
-    // ── roteiro ───────────────────────────────────────────────────────────
-    const inventoryText = serializeInventory(inventory);
-    const allowed = allowedSelectors(inventory);
-
+    // ── formato ───────────────────────────────────────────────────────────
     // O modo de saída é o que define o produto, e o produto define o texto: sem
     // voz, o modelo escreve `caption` (o balão é o único canal) em vez de só
     // `say`. Derivado do modo em vez de ser um parâmetro próprio para que não
     // exista o estado incoerente "roteiro de GIF, gravação de vídeo".
-    const mode = opts.recording.mode ?? opts.recording.animate?.format ?? "mp4";
+    let mode: OutputMode | undefined =
+      opts.recording.mode ?? opts.recording.animate?.format;
+    if (!mode && isInteractive()) {
+      const choice = await ask(
+        "Formato de saída?\n" +
+          "  [r] remotion — MP4 + projeto editável (voz, transições, frases de impacto)\n" +
+          "  [m] mp4      — vídeo narrado (padrão)\n" +
+          "  [g] gif      — animação silenciosa com balão de texto\n" +
+          "Enter = mp4",
+      );
+      const key = choice.trim().toLowerCase();
+      mode = key === "r" || key === "remotion" ? "remotion"
+        : key === "g" || key === "gif" ? "gif"
+        : "mp4";
+      log(`formato: ${mode}`);
+    }
+    mode ??= "mp4";
+    // Stamp the choice into opts so the recording phase sees it.
+    opts.recording.mode = mode;
+    // When the user picks an animated format interactively, build the encoder
+    // options that `record()` needs — otherwise the GIF pass is skipped and an
+    // MP4 comes out instead.
+    if ((mode === "gif" || mode === "webp") && !opts.recording.animate) {
+      opts.recording.animate = { format: mode };
+    }
+
     const silent = !MODE_CAPS[mode].voice;
+
+    // ── roteiro ───────────────────────────────────────────────────────────
+    const inventoryText = serializeInventory(inventory);
+    const allowed = allowedSelectors(inventory);
 
     let storyboard = await writeStoryboard({
       request,

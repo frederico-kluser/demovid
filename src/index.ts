@@ -134,8 +134,9 @@ type CliValues = {
 async function runScriptFlow(dir: string, values: CliValues): Promise<number> {
   const capture = await buildCapturePlan(values.res, values.monitor);
   const chrome = values.chrome === "keep" || values.chrome === "crop" ? values.chrome : "auto";
-  const mode = resolveOutputMode(values.format);
-  const animate = buildAnimate(mode, { maxMb: values["max-mb"], fps: values.fps });
+  // Only set mode when --format was explicitly given; absent means "ask the user".
+  const mode = values.format ? resolveOutputMode(values.format) : undefined;
+  const animate = mode ? buildAnimate(mode, { maxMb: values["max-mb"], fps: values.fps }) : undefined;
   return scriptFlow({
     dir,
     yes: values.yes ?? false,

@@ -11,7 +11,7 @@
  * a file-routed framework has pages that no link points at, so a crawl would
  * never find them.
  */
-import { readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export type Framework =
@@ -30,6 +30,8 @@ export type Framework =
 export interface ProjectScan {
   dir: string;
   name: string;
+  /** False when no package.json was found in the directory. */
+  hasPkg: boolean;
   framework: Framework;
   packageManager: "npm" | "pnpm" | "yarn" | "bun";
   /** The script to run, e.g. `dev`. Null when none looks like a dev server. */
@@ -131,6 +133,16 @@ async function fileRoutes(dir: string, framework: Framework): Promise<string[]> 
   return [...found].sort();
 }
 
+/**
+ * True when a `.git` directory (or file, for worktrees) exists at `dir`.
+ * Uses `access` rather than the module-level `exists` because `exists` calls
+ * `readFile`, which fails with `EISDIR` on the directory that a normal repo
+ * has at `.git`. `access` works for both files and directories.
+ */
+export async function hasGitRepo(dir: string): Promise<boolean> {
+  return access(join(dir, ".git")).then(() => true, () => false);
+}
+
 export async function scanProject(dir: string): Promise<ProjectScan> {
   const notes: string[] = [];
   const pkg = await readJson(join(dir, "package.json"));
@@ -140,6 +152,7 @@ export async function scanProject(dir: string): Promise<ProjectScan> {
     return {
       dir,
       name: dir.split("/").pop() ?? "projeto",
+      hasPkg: false,
       framework: "static",
       packageManager: "npm",
       script: null,
@@ -177,6 +190,7 @@ export async function scanProject(dir: string): Promise<ProjectScan> {
   return {
     dir,
     name: pkg.name ?? dir.split("/").pop() ?? "projeto",
+    hasPkg: true,
     framework,
     packageManager,
     script,
