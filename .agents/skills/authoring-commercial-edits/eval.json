@@ -1,0 +1,63 @@
+{
+  "routing": {
+    "must_trigger": [
+      "add a new transition kind to the commercial edit",
+      "the impact phrase is on the wrong shot",
+      "a cut clipped the last word of a spoken sentence",
+      "the composition length disagrees with the sum of its scenes"
+    ],
+    "must_not_trigger": [
+      "the overlay scaled with the page during zoom",
+      "the recorder was left capturing after a crash"
+    ]
+  },
+  "claims": [
+    {
+      "assert": "code-contains",
+      "path": "src/remotion/edl.ts",
+      "needle": "HANDLE_MS",
+      "why": "os frames de silêncio que pagam a transição; sem eles a sobreposição come palavra"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/remotion/edl.ts",
+      "needle": "tl.cuts.some",
+      "why": "a costura: cuts[] decide SE a fronteira pode ser aparada, não onde"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/remotion/edl.ts",
+      "needle": "TINY_SCENE_MS",
+      "why": "cena curtíssima não recebe transição nem texto"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/remotion/edl.ts",
+      "needle": "trimBefore",
+      "why": "o nome atual do prop (4.0.319+); startFrom/endAt são o legado deprecado"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/openai/commercial.ts",
+      "needle": "impactAtPercent",
+      "why": "o modelo nunca vê frame; a conversão tem um dono só"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/openai/commercial.ts",
+      "needle": "\"transition\", \"impactAtPercent\", \"impact\"",
+      "why": "ordem load-bearing do required: o corte e o instante ANTES do texto"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/openai/commercial.ts",
+      "needle": ".nullish()",
+      "why": "strict:true emite null, stripNulls o remove, e o zod recebe undefined"
+    },
+    {
+      "assert": "npm-script",
+      "name": "test",
+      "why": "declared verification signal"
+    }
+  ]
+}
