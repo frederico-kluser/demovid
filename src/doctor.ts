@@ -145,7 +145,7 @@ export async function doctor(opts: DoctorOptions = {}): Promise<boolean> {
   // flag o relatório diz o que sabe, não o que gostaria de saber.
   const key = process.env["OPENAI_API_KEY"];
   if (!key) {
-    push("OPENAI_API_KEY", "fail", "ausente — necessária para a narração (TTS)");
+    push("OPENAI_API_KEY", "fail", "ausente — necessária para o roteiro (gpt-5.4) e para a narração (TTS)");
   } else {
     try {
       const res = await fetch("https://api.openai.com/v1/models", {
@@ -200,9 +200,18 @@ export async function doctor(opts: DoctorOptions = {}): Promise<boolean> {
   }
 
   // ── DeepSeek ───────────────────────────────────────────────────────────────
+  //
+  // Only `pi` uses this now: the storyboard and the commercial edit moved back to
+  // `gpt-5.4` on the OpenAI key. So it is a WARN and not a FAIL — a project that
+  // already has a `.demovid.json`, or a run given `--url`, never asks pi anything
+  // and records perfectly well without this key.
   const dsKey = process.env["DEEPSEEK_API_KEY"];
   if (!dsKey) {
-    push("DEEPSEEK_API_KEY", "fail", "ausente — necessária para script e commercial com DeepSeek");
+    push(
+      "DEEPSEEK_API_KEY",
+      "warn",
+      "ausente — só é usada pelo agente `pi` na descoberta do projeto. Com `.demovid.json` já escrito ou com `--url`, não faz falta.",
+    );
   } else {
     try {
       const res = await fetch("https://api.deepseek.com/v1/models", {

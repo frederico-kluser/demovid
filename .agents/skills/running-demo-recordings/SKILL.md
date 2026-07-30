@@ -41,8 +41,11 @@ demovid record demo.yaml --format webp --max-mb 2
 ```
 
 - **No `OPENAI_API_KEY` is needed to record one** — synthesis is skipped, not muted, so a
-  hand-written storyboard renders with no API access at all. The key is still needed to *write* a
-  storyboard.
+  hand-written storyboard renders with no API access at all. *Writing* a storyboard needs
+  `DEEPSEEK_API_KEY`, not the OpenAI one: since 2026-07-30 the two keys have separate jobs and
+  neither substitutes for the other — DeepSeek writes the prose, OpenAI synthesises the narration.
+  So `--format gif|webp` from a hand-written storyboard needs no key at all, and the same format
+  from the guided flow needs only DeepSeek.
 - The balloon is the only channel, so it reads the step's `caption` (falling back to `say`), and the
   `readme` preset is applied unless `--preset` says otherwise.
 - Over budget, frames are dropped 15→12→10→8→6→5 fps. If 5 fps still misses, you get the file plus a
@@ -102,7 +105,7 @@ heavier dim, larger text). `--camera` only to force a rung; `auto` decides durin
 | Balloon on the wrong element | A selector matched something else; run `rehearse` and read which node it resolved |
 | `rec` refuses to start | A capture is already running → `recstop` |
 | Everything ran without zoom | The rehearsal demoted the camera to `R3`; the reason is in its output |
-| `insufficient_quota` | The OpenAI account has no credit. `demovid doctor --deep` confirms it — the plain check cannot, because `/v1/models` is free and returns 200 at zero balance |
+| `insufficient_quota` | An account has no credit. Read the message for *which*: "a chave da OpenAI" is the narration, "a chave da DeepSeek" is the storyboard. `demovid doctor --deep` confirms the OpenAI side — the plain check cannot, because `/v1/models` is free and returns 200 at zero balance. There is no deep check for DeepSeek, so a DeepSeek balance of zero passes `doctor` and fails at the first storyboard |
 
 ## References
 

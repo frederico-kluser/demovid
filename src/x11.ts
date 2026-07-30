@@ -177,6 +177,45 @@ export function usableContentBox(monitor: Monitor, area: Rect | null, frame: Fra
 }
 
 /**
+ * Move a mapped window's top-left corner, in absolute desktop coordinates.
+ *
+ * Best-effort, like `parkPointer`: a machine without xdotool keeps whatever the
+ * window manager decided, which is the situation demovid was already in.
+ *
+ * `--sync` matters. Without it xdotool returns as soon as the request is queued,
+ * and the geometry read immediately afterwards is the OLD one — which reads as
+ * "the move did not work" and invites a retry loop that fights the compositor.
+ *
+ * And `--sync` is exactly why the timeout is not optional: it blocks until the
+ * window manager confirms the move, so a WM that simply declines it (a maximised
+ * or tiled window) never returns. Three seconds, then the recording goes on with
+ * whatever position it has — being slightly off-screen is a bad take, but hanging
+ * before the recorder ever starts is no take at all.
+ */
+export async function moveWindow(windowId: string, x: number, y: number): Promise<void> {
+  await run("xdotool", ["windowmove", "--sync", windowId, String(x), String(y)], {
+    timeoutMs: 3_000,
+  }).catch(() => {});
+}
+
+/**
+ * Slide `win` until it sits inside `box`, without resizing it.
+ *
+ * Clamped low-edge-last on purpose: when the window is genuinely bigger than the
+ * box there is no position that satisfies both edges, and the choice of which one
+ * to sacrifice is not arbitrary. Keeping the top-left visible loses the bottom of
+ * a window whose title bar and content start are still on screen; keeping the
+ * bottom-right visible loses the part every UI puts its primary controls in. So
+ * the origin wins, and the overflow goes off the bottom-right where the recorder
+ * will crop it anyway.
+ */
+export function clampIntoBox(win: Rect, box: Rect): { x: number; y: number } {
+  const x = Math.max(box.x, Math.min(win.x, box.x + box.w - win.w));
+  const y = Math.max(box.y, Math.min(win.y, box.y + box.h - win.h));
+  return { x, y };
+}
+
+/**
  * Move the real pointer out of the recorded window.
  *
  * Not cosmetic. Playwright's `page.mouse` dispatches CDP events and never moves

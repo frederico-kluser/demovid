@@ -61,6 +61,12 @@ export type EventType =
   | "balloon-hide"
   | "clip-start"
   | "clip-end"
+  // Waiting for the app, as opposed to waiting for the viewer, which is `dwell`.
+  // Separate types because the editor's question about them is opposite: dwell is
+  // deliberate pacing worth keeping, and a settle is dead air that only exists
+  // because the app was busy — the first thing to trim when a cut needs room.
+  | "settle"
+  | "expect"
   | "dwell"
   | "lead-out"
   | "error";

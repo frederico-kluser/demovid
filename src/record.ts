@@ -31,9 +31,9 @@ import { applyLocale, dwellFor, LOCALES, PRESETS, type Preset } from "./presets/
 import { startRecording, type Recording } from "./rec.js";
 import type { CapturePlan } from "./resolution.js";
 import { splitSentences } from "./openai/tts.js";
-import { balloonTextOf, type Step, type Storyboard } from "./storyboard.js";
+import { balloonTextOf, DEFAULT_STEP_TIMEOUT_MS, type Step, type Storyboard } from "./storyboard.js";
 import { buildTimeline, timelinePathFor, TimelineRecorder, writeTimeline } from "./timeline.js";
-import { defaultWindowOrigin, parkPointer, windowGeometry } from "./x11.js";
+import { clampIntoBox, defaultWindowOrigin, moveWindow, parkPointer, windowGeometry } from "./x11.js";
 
 /** Clips are served to the page from disk over an intercepted virtual origin. */
 const CLIP_ORIGIN = "https://demovid.invalid";
@@ -91,6 +91,16 @@ export interface RecordOptions {
   openStudio?: boolean;
   /** Which synthesiser narrates. Defaults to `speech`; see `src/openai/tts-audio.ts`. */
   voiceEngine?: VoiceEngine;
+  /**
+   * Selectors that mean "this app is busy", on top of `LOADING_SELECTORS`.
+   *
+   * Comes from the `readiness` block `pi` writes into the target project's
+   * `.demovid.json`. Additive rather than a replacement: the generic ARIA and
+   * class-name patterns cost nothing when an app does not use them, and an agent
+   * that found one project-specific spinner has not thereby proven the others
+   * absent.
+   */
+  loadingSelectors?: string[];
   onLog?: (line: string) => void;
 }
 
@@ -170,6 +180,145 @@ function locatorFor(page: Page, target: string): Locator {
 }
 
 /**
+ * Loading indicators every frontend agrees on, whatever it is built with.
+ *
+ * ARIA first, because it is the only part of this list an app is *supposed* to
+ * get right, and the class-name patterns after it, because most apps do not. A
+ * false positive here — a permanently visible element whose class happens to
+ * contain "loading" — costs the settle ceiling and a log line, never the take:
+ * `settle` is best-effort by construction, for exactly this reason.
+ *
+ * Project-specific selectors are appended by the caller from the `readiness`
+ * block that `pi` writes into `.demovid.json`; these are the floor, not the
+ * whole answer.
+ */
+export const LOADING_SELECTORS = [
+  '[aria-busy="true"]',
+  '[role="progressbar"]',
+  '[data-loading="true"]',
+  '[data-state="loading"]',
+  '[class*="spinner" i]',
+  '[class*="skeleton" i]',
+  '[class*="loading" i]',
+  '[class*="loader" i]',
+];
+
+/** Ceiling for the automatic settle when the step does not set `timeoutMs`. */
+const SETTLE_DEFAULT_MS = 8_000;
+
+/**
+ * Actions that can leave the app busy, and therefore get an automatic settle.
+ *
+ * `hover` and `focus` are excluded because they change nothing the app has to go
+ * and fetch, and `wait` because a step that just finished waiting on an explicit
+ * condition does not need to be second-guessed by a heuristic. `scroll` is IN:
+ * lazy lists and infinite scroll are loading triggered by scrolling, and the
+ * screenshot of a half-populated list is the artifact this whole mechanism is
+ * about.
+ */
+const SETTLING_ACTIONS: ReadonlySet<string> = new Set(["click", "type", "goto", "scroll"]);
+
+/**
+ * Wait for the app to stop being busy after an action.
+ *
+ * This is the whole answer to "the demo recorded the spinner". Before it, an
+ * action was followed straight by the preset's `dwell` — a FIXED time that knows
+ * nothing about whether the app finished. A click that opened a repository got
+ * the same 3 seconds as a click that toggled a checkbox, so the fast one held an
+ * idle frame and the slow one was cut off mid-load and blamed on the app.
+ *
+ * Three signals, weakest first, and none of them fatal:
+ *
+ *  1. `networkidle`, best-effort and on a short leash. Playwright itself
+ *     discourages it and an app holding a WebSocket open — which is most of the
+ *     apps worth demoing, GitCraque included — may never reach it. It is here
+ *     because when it does fire it is the cheapest possible confirmation, not
+ *     because anything depends on it.
+ *  2. **No loading indicator visible.** The load-bearing one. Waiting for the
+ *     spinner to LEAVE is the only signal in this list that describes the thing
+ *     the operator actually cares about.
+ *  3. A short quiet period, so a repaint that lands one frame after the spinner
+ *     leaves is inside the take rather than one frame outside it.
+ *
+ * Returns what happened so the timeline can show it — a step that timed out
+ * waiting is a real editorial fact about the recording, not an internal detail.
+ */
+/**
+ * Which of `selectors` currently match a visible element.
+ *
+ * Used once, on the app at rest, to throw away the ones that are always on
+ * screen. `LOADING_SELECTORS` matches on substrings — `[class*="loading" i]` hits
+ * a permanent `loadingContainer` just as happily as a spinner — and a selector
+ * that never goes away makes every single step wait out its full ceiling. Eight
+ * steps into a demo that is a minute of dead air produced by a heuristic.
+ *
+ * Measuring beats guessing here, and the measurement is nearly free: whatever is
+ * still visible after the app has finished loading is, by definition, not a
+ * loading indicator.
+ */
+async function visibleLoaders(page: Page, selectors: string[]): Promise<string[]> {
+  return page
+    .evaluate(
+      (sels: string[]) =>
+        sels.filter((sel) => {
+          try {
+            return Array.from(document.querySelectorAll(sel)).some((el) => {
+              const r = el.getBoundingClientRect();
+              if (r.width < 2 || r.height < 2) return false;
+              const st = getComputedStyle(el);
+              return st.visibility !== "hidden" && st.display !== "none" && Number(st.opacity) > 0.05;
+            });
+          } catch {
+            return false;
+          }
+        }),
+      selectors,
+    )
+    .catch(() => [] as string[]);
+}
+
+async function settle(
+  page: Page,
+  selectors: string[],
+  timeoutMs: number,
+): Promise<"quiet" | "timeout" | "skipped"> {
+  await page.waitForLoadState("networkidle", { timeout: Math.min(2_000, timeoutMs) }).catch(() => {});
+
+  if (selectors.length === 0) return "skipped";
+
+  try {
+    // Anonymous arrows only, never a named inner function: under tsx, esbuild's
+    // `keepNames` rewrites a named function to `__name(fn, "fn")` and the helper
+    // does not travel into the page. See `installNameShim` in project/inventory.ts.
+    await page.waitForFunction(
+      (sels: string[]) =>
+        !sels.some((sel) => {
+          try {
+            return Array.from(document.querySelectorAll(sel)).some((el) => {
+              const r = el.getBoundingClientRect();
+              if (r.width < 2 || r.height < 2) return false;
+              const st = getComputedStyle(el);
+              return (
+                st.visibility !== "hidden" && st.display !== "none" && Number(st.opacity) > 0.05
+              );
+            });
+          } catch {
+            // An invalid selector must not be able to hang the settle forever.
+            return false;
+          }
+        }),
+      selectors,
+      { timeout: timeoutMs, polling: 120 },
+    );
+  } catch {
+    return "timeout";
+  }
+
+  await sleep(180);
+  return "quiet";
+}
+
+/**
  * Serve the cached MP3s to the page.
  *
  * Route interception rather than data: URLs — a 20-step demo would otherwise
@@ -206,6 +355,11 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
   const mode: OutputMode = opts.mode ?? opts.animate?.format ?? "mp4";
   const caps = MODE_CAPS[mode];
   const cacheDir = opts.cacheDir ?? join(process.cwd(), ".demovid-cache");
+
+  // Deduplicated: `pi` is asked for the app's loading indicators and will
+  // sometimes answer with `[aria-busy="true"]`, which is already in the floor.
+  // A repeat costs a redundant `querySelectorAll` on every poll of every settle.
+  let loaders = [...new Set([...LOADING_SELECTORS, ...(opts.loadingSelectors ?? [])])];
 
   // The recorder only ever writes an MP4; a GIF is a conversion of one. The
   // intermediate is a dotfile beside the real output rather than in /tmp, so it
@@ -297,20 +451,69 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
   const dropChrome = chromeMode !== "keep";
 
   if (dropChrome && plan && !plan.mobile) {
-    // Make the content area exactly the requested resolution, so the region
-    // needs no scaling either.
+    // Make the content area as close to the requested resolution as FITS, so the
+    // region needs no scaling either.
+    //
+    // "As fits", not "exactly": this asked for `plan.target` and that is how the
+    // window ended up hanging off the monitor. `planCapture` has already fitted
+    // the request to the screen and put the result in `plan.window` — when the
+    // two differ it is because the target was measured not to fit, so re-asking
+    // for `target` here re-created exactly the size that was rejected, and the
+    // upscale it was trying to avoid happened in post anyway.
+    //
+    // The second clamp is the browser's own UI. `plan.usable` bounds the whole OS
+    // window while `plan.window` describes only the content, so the chrome has to
+    // come out of the height or the window overflows the bottom of the work area
+    // even when the content itself fits. It is measured here rather than reserved
+    // in `planCapture` because its height is not knowable before launch.
     //
     // Iterated, because the browser's UI height is not stable across the
     // resize: measured, a first pass landed 20px short because an infobar the
     // browser decided to show appeared between the measurement and the resize.
-    // Two passes converge; the third is insurance.
+    // Two passes converge; the third is insurance. `finalizeCapture` re-derives
+    // whether a scale is needed from the geometry that actually resulted, so
+    // giving up pixels here still delivers the requested resolution.
     for (let attempt = 0; attempt < 3; attempt++) {
-      await setContentSize(browser.page, plan.target.w, plan.target.h, dsfPlan).catch(() => {});
+      const wantW = Math.min(plan.window.w, plan.usable.w);
+      const wantH = Math.min(plan.window.h, Math.max(2, plan.usable.h - chromePx));
+      await setContentSize(browser.page, wantW, wantH, dsfPlan).catch(() => {});
       await sleep(280);
       chromePx = await chromeHeightPx(browser.page, dsfPlan).catch(() => chromePx);
       const g = await windowGeometry(browser.windowId);
       if (!g) break;
-      if (Math.abs(g.h - chromePx - plan.target.h) <= 2) break;
+      if (Math.abs(g.h - chromePx - wantH) <= 2) break;
+    }
+  }
+
+  // ── 2c. trazer a janela de volta para dentro da tela ──────────────────────
+  //
+  // The window is positioned exactly once, by `--window-position` at launch, and
+  // then RESIZED — by the loop above, and by whatever Chromium does about a size
+  // it dislikes. A resize keeps the top-left corner, so growing the window pushes
+  // its bottom-right off the work area, and nothing here ever looked. Observed on
+  // a real take: the recorded window hung off the operator's screen.
+  //
+  // Checked against `plan.usable`, which is the box `planCapture` already fitted
+  // the request to, and corrected with `xdotool windowmove` — the only mechanism
+  // that can move a mapped window, and one this codebase did not have.
+  //
+  // Silent when it is already inside, which is the common case: a log line every
+  // run would train the operator to ignore the one run where it mattered.
+  if (plan) {
+    const before = await windowGeometry(browser.windowId);
+    if (before) {
+      const { x, y } = clampIntoBox(before, plan.usable);
+      if (x !== before.x || y !== before.y) {
+        await moveWindow(browser.windowId, x, y);
+        log(`a janela estava fora da área útil — movida de (${before.x},${before.y}) para (${x},${y})`);
+        if (before.w > plan.usable.w || before.h > plan.usable.h) {
+          const w =
+            `a janela (${before.w}x${before.h}) é maior que a área útil ` +
+            `(${plan.usable.w}x${plan.usable.h}) — parte dela fica fora da tela`;
+          warnings.push(w);
+          log(`aviso: ${w}`);
+        }
+      }
     }
   }
 
@@ -380,6 +583,26 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
       warnings.push("a página não chegou a `load` em 30s — seguindo com o que carregou");
     });
 
+    // ── calibrar os indicadores de carregamento ─────────────────────────────
+    //
+    // Let the app finish booting, then throw away every "loading indicator" that
+    // is STILL on screen. Those are false positives by definition — the app is at
+    // rest and they did not go away — and each one left in would make every
+    // subsequent step wait out its whole ceiling for something that never moves.
+    //
+    // This is what makes the substring patterns in `LOADING_SELECTORS` safe to
+    // ship. Without it, one permanent `<div class="loadingContainer">` turns an
+    // eight-step demo into a minute of dead air, and the operator has no way to
+    // tell that from a genuinely slow app.
+    if (loaders.length > 0) {
+      await settle(page, loaders, 10_000);
+      const stuck = await visibleLoaders(page, loaders);
+      if (stuck.length > 0) {
+        loaders = loaders.filter((s) => !stuck.includes(s));
+        log(`${stuck.length} indicador(es) sempre visíveis — ignorados: ${stuck.join(", ")}`);
+      }
+    }
+
     const mounted = await page.evaluate(
       (style) => window.__demovid?.mount(style),
       overlayStyleOf(preset) as never,
@@ -443,7 +666,7 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
       const stepEvent = tl.mark("step-start", { action: step.action, target: step.target }, i);
       try {
         if (died) throw new Error(`o browser morreu antes deste passo: ${died}`);
-        await runStep(page, step, preset, clipsByStep[i] ?? [], cameraRung, log, tl, i, caps);
+        await runStep(page, step, preset, clipsByStep[i] ?? [], cameraRung, log, tl, i, caps, loaders);
       } catch (err) {
         report.ok = false;
         report.detail = (err as Error).message;
@@ -719,11 +942,20 @@ async function runStep(
   tl: TimelineRecorder,
   index: number,
   caps: ModeCaps,
+  loaders: string[],
 ): Promise<void> {
+  const timeout = step.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS;
+
+  // A step waiting for something to LEAVE must not aim at it first. The aim block
+  // below waits for `target` to be visible, so a `waitFor: "hidden"` step whose
+  // spinner had already gone would fail on the aim — the step doing its job
+  // perfectly is the case that would have thrown.
+  const vanishing = step.action === "wait" && (step.waitFor === "hidden" || step.waitFor === "detached");
+
   // ── aim ──────────────────────────────────────────────────────────────────
-  if (step.target) {
+  if (step.target && !vanishing) {
     const loc = locatorFor(page, step.target);
-    await loc.waitFor({ state: "visible", timeout: 10_000 });
+    await loc.waitFor({ state: "visible", timeout: Math.min(timeout, 10_000) });
     // `scrollIntoViewIfNeeded` waits for the element's box to be stable across
     // two consecutive frames — placing a balloon against a moving rect is what
     // produces the "balloon floating in space" artifact.
@@ -780,7 +1012,9 @@ async function runStep(
   if (balloonText) {
     await page.evaluate(
       ([text, sel]) => window.__demovid!.say(text as string, (sel as string | undefined) ?? undefined),
-      [balloonText, step.target] as const,
+      // Unanchored on a step waiting for something to LEAVE: the balloon would be
+      // pinned to an element that is about to be removed, or is already gone.
+      [balloonText, vanishing ? undefined : step.target] as const,
     );
     tl.mark("balloon-show", { text: balloonText }, index);
   }
@@ -853,11 +1087,44 @@ async function runStep(
       );
       break;
     case "wait": {
-      if (step.target) await locatorFor(page, step.target).waitFor({ state: "visible", timeout: 15_000 });
-      else await sleep(Math.min(Number(step.value ?? 0), 15_000));
+      // `waitFor` defaults to `visible`, which is what this did before the field
+      // existed — an old storyboard keeps its exact behaviour.
+      if (step.target) {
+        await locatorFor(page, step.target).waitFor({ state: step.waitFor ?? "visible", timeout });
+      } else {
+        await sleep(Math.min(Number(step.value ?? 0), timeout));
+      }
       break;
     }
   }
+
+  // ── settle ───────────────────────────────────────────────────────────────
+  //
+  // Between the action and the dwell, because the dwell is the shot: time spent
+  // waiting here is time the viewer does not spend looking at a spinner, and the
+  // preset's pacing then applies to a finished screen instead of a loading one.
+  //
+  // Never fatal. A settle that times out means the app is still busy, and the
+  // recording that shows that honestly is more useful than a failed step — so it
+  // is logged, marked on the timeline, and the take goes on.
+  if (SETTLING_ACTIONS.has(step.action)) {
+    const outcome = await settle(page, loaders, step.timeoutMs ?? SETTLE_DEFAULT_MS);
+    if (outcome !== "skipped") tl.mark("settle", { outcome }, index);
+    if (outcome === "timeout") {
+      log(`passo ${index}: o app ainda estava carregando depois de ${step.timeoutMs ?? SETTLE_DEFAULT_MS}ms`);
+    }
+  }
+
+  // `expect` is checked AFTER the settle, so it only pays for what the settle
+  // could not see: a result that needs a second round trip, a list repainted by a
+  // websocket frame. Unlike `target` it is not constrained to the inventory —
+  // the element usually does not exist yet at crawl time, which is the point.
+  if (step.expect) {
+    const wait = tl.mark("expect", { target: step.expect }, index);
+    await locatorFor(page, step.expect).waitFor({ state: "visible", timeout });
+    tl.end(wait);
+  }
+
   tl.end(act);
 
   // ── dwell ────────────────────────────────────────────────────────────────

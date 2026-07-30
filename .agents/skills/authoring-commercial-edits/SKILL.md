@@ -94,12 +94,20 @@ screensaver and each one costs real frames from both neighbours. Observed on the
 model chose `corte` for all five scenes and two impact phrases across the whole piece — that is the
 prompt working, not the prompt failing.
 
-### `strict:true` emits nulls; zod must accept `undefined`
+### The model emits nulls; zod must accept `undefined`
 
-`stripNulls` removes the nulls that Structured Outputs is *forced* to emit for an optional field, so
-what reaches zod is `undefined`. Declaring `.nullable()` alone rejected **every** scene the model
-correctly left without text — three of three on the first real call. Optional fields here are
-`.nullish()`. Pinned by a test in `test/edl.test.ts`.
+`stripNulls` removes the nulls that arrive for an optional field, so what reaches zod is `undefined`.
+Declaring `.nullable()` alone rejected **every** scene the model correctly left without text — three
+of three on the first real call. Optional fields here are `.nullish()`. Pinned by a test in
+`test/edl.test.ts`.
+
+The *reason* changed on 2026-07-30 and the *rule* did not, which is the trap: this used to be
+`strict:true` **forcing** every property into `required` with `["string","null"]` unions, so nulls
+were guaranteed by the API. Under DeepSeek nothing forces them — but the schema still declares those
+unions (it travels as prompt text now), the model still obeys them, and `stripNulls` still runs. So
+the rule holds for a weaker reason: nulls are *likely* rather than *certain*. Do not "simplify" it by
+dropping `stripNulls` or narrowing `.nullish()` to `.optional()` — the first real call that emits a
+null would take the whole edit down, and the take is already paid for by then.
 
 ### Everything after the MP4 degrades instead of throwing
 

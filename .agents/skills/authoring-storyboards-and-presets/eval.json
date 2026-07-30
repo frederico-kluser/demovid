@@ -2,7 +2,7 @@
   "routing": {
     "must_trigger": [
       "add a new action verb to the storyboard schema",
-      "openai structured outputs returned a 400 on my json schema",
+      "the model returned a storyboard with the wrong shape and zod rejected it",
       "add a locale overlay for a new language preset",
       "tune the dwell time and pacing of a preset"
     ],
@@ -28,7 +28,19 @@
       "assert": "code-contains",
       "path": "src/storyboard.ts",
       "needle": "STORYBOARD_JSON_SCHEMA",
-      "why": "the shape guarantee half of the two-schema split"
+      "why": "the hand-written schema the system prompt carries"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/openai/responses.ts",
+      "needle": "response_format",
+      "why": "the only shape lever DeepSeek offers. The whole skill turns on this being json_object rather than json_schema+strict — if a migration back to server-side enforcement lands, this claim is where the skill should be re-read. Comments are stripped before matching, so this hits the real call body, not the header prose that also names it"
+    },
+    {
+      "assert": "code-lacks",
+      "path": "src/openai/responses.ts",
+      "needle": "previous_response_id",
+      "why": "Chat Completions is stateless, which is WHY every repair has to re-send the inventory. The migration left this word in the header comment explaining its own removal, and comment-stripping is what keeps that from satisfying a claim about behaviour — the exact failure the stripper was built for"
     },
     {
       "assert": "code-contains",

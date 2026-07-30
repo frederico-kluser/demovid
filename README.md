@@ -29,10 +29,13 @@ on startup — whichever of those is actual evidence rather than a guess.
 When that is not enough, demovid hands the repository to the
 [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent
 (`deepseek-v4-pro`, thinking `xhigh`), which reads the README, follows the dev
-script, and answers three things nothing else can: **how to start the app and at
+script, and answers four things nothing else can: **how to start the app and at
 which URL**, **whether it needs a login and which dev credentials the repo
-documents**, and **what is actually worth demonstrating** — offered as a
-ready-made answer you accept with Enter or type over.
+documents**, **how the app shows that it is busy** — the spinners, skeletons and
+`aria-busy` flags a Playwright script has to wait out, plus which operations are
+slow enough to need a bigger ceiling — and **what is actually worth
+demonstrating**, offered as a ready-made answer you accept with Enter or type
+over. The answer is cached in `.demovid.json`, so it is asked once.
 
 The answer is written to `.demovid.json` in your project, so it is paid for once,
 and it is plain JSON you can correct by hand. It is re-derived when your manifests
@@ -110,11 +113,15 @@ and `readme`, locale `pt-BR`. Output as MP4, GIF or animated WebP. Resolutions f
 - **Linux/X11.** Window capture is native there. Wayland falls back to the desktop portal and is
   untested.
 - **Node ≥ 20**, a **Chromium-family browser** (Brave, Chrome, Chromium — Firefox will not work, no
-  CDP), **ffmpeg**, **xdotool**, and an **`OPENAI_API_KEY`**.
-- **The [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent and a
-  `DEEPSEEK_API_KEY`** — needed only when demovid cannot work out how to run your project from its
-  files, which is the case for anything with a non-standard dev server. A project it recognises never
-  calls it, and `--no-discover` or `--url` opt out entirely.
+  CDP), **ffmpeg** and **xdotool**.
+- **Two API keys, split by job rather than by vendor.** `OPENAI_API_KEY` writes the storyboard and
+  the commercial edit (`gpt-5.4`) and synthesises the narration. `DEEPSEEK_API_KEY` is spent only by
+  the `pi` agent below. Recording a hand-written storyboard with `--format gif|webp` needs no key at
+  all — no prose to write, no narration to synthesise.
+- **The [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent** — the
+  only thing that spends `DEEPSEEK_API_KEY`, and it is called only when demovid cannot work out how
+  to run your project from its files, which is the case for anything with a non-standard dev server.
+  A project it recognises never calls it, and `--no-discover` or `--url` opt out entirely.
 - **A screen recorder — optional.** demovid prefers
   [`gpu-screen-recorder`](https://git.dec05eba.com/gpu-screen-recorder/about/) and drives it
   directly; there is no wrapper script to install. Without it, it falls back to ffmpeg (`x11grab` +

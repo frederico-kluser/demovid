@@ -22,6 +22,7 @@
 import { z } from "zod";
 import {
   callStructured,
+  CHAT_MODEL,
   ChatError,
   stripNulls,
 } from "./responses.js";
@@ -57,7 +58,34 @@ HARD RULES
 - Prefer 5 to 9 steps. Fewer than 4 is not a demo; more than 12 is a manual.
 - Actions that need a target: click, type, hover, focus. "goto" needs a URL in value. "type" needs the
   text in value. "wait" needs either a target to wait for or milliseconds in value.
-- Start with a "wait" step that introduces the app while the first sentence plays.`;
+- Start with a "wait" step that introduces the app while the first sentence plays.
+
+ESPERAR CARREGAMENTO — the difference between a demo and a video of a spinner
+
+The recorder already waits, on its own, for the app to go quiet after every click, type, goto and
+scroll: it waits out the network and waits for every known loading indicator to disappear. You do
+not need to add a step for that, and adding a bare "wait" with milliseconds after every click is
+the wrong instinct — it makes the video longer without making it more correct.
+
+What the recorder CANNOT work out on its own, and what you are responsible for:
+
+- **"expect"** — when an action's whole point is to produce something, name the thing. Put in
+  "expect" the selector of the RESULT that has to be on screen before the demo moves on: the list
+  that gets populated, the panel that opens, the graph that draws. This is what stops the next step
+  from acting on a screen that has not arrived yet, and it is the single most valuable field here.
+  It may be a selector that is NOT in the inventory — the element usually does not exist until the
+  action creates it, which is exactly why it is worth waiting for.
+- **"timeoutMs"** — the default ceiling is 15 seconds. If the app's notes say an operation is slow
+  (a clone, a build, an import, anything that shells out), set this on that step. A step that ran
+  out of time is a failed step in the report and a cut in the video.
+- **"wait" with "waitFor": "hidden"** — to wait for a specific spinner to LEAVE, when the inventory
+  lists a loading indicator and the moment it disappears is itself worth showing. Note the
+  direction: waiting for a spinner to APPEAR records the app being busy, which is the opposite of
+  what a demo wants.
+
+Rules of thumb: prefer "expect" over a timed "wait" every time — one describes the app, the other
+describes a guess. Never use a timed "wait" longer than 2000ms to paper over a load; that is what
+"expect" and "timeoutMs" are for. Do not put a loading indicator in "target" of a click.`;
 
 /**
  * Appended for silent output. The difference is not "shorter `say`" — it is a
@@ -106,10 +134,22 @@ export interface WriteOptions {
   inventory: string;
   /** Selectors the model is allowed to use. */
   allowed: Set<string>;
+  /**
+   * What the project's own configuration says about waiting: its loading
+   * indicators, the selectors that mean "done", and which operations are slow.
+   * Written by `pi` into `.demovid.json`; empty when nothing is known.
+   */
+  readiness?: string;
   appName: string;
   url: string;
   log: (line: string) => void;
 }
+
+/** The readiness section of the prompt, or nothing when there is nothing to say. */
+const readinessBlock = (readiness: string | undefined): string =>
+  readiness?.trim()
+    ? `## ESPERAS CONHECIDAS NESTE APP (do \`.demovid.json\`)\n${readiness}\n\n`
+    : "";
 
 /** Problems that are worth another round-trip, phrased for the model. */
 function auditStoryboard(sb: Storyboard, allowed: Set<string>): string[] {
@@ -130,15 +170,17 @@ export async function writeStoryboard(opts: WriteOptions): Promise<Storyboard> {
   const header =
     `## APP\nname: ${opts.appName}\nurl: ${opts.url}\n\n` +
     `## INVENTORY (the ONLY selectors you may use)\n${opts.inventory}\n\n` +
+    readinessBlock(opts.readiness) +
     `## PEDIDO DO USUÁRIO (em português — é isto que a demo tem que mostrar)\n${opts.request}`;
 
   const system = systemFor(opts.silent ?? false);
-  opts.log(`pensando com deepseek-v4-pro — isso leva alguns minutos`);
+  opts.log(`pensando com ${CHAT_MODEL} — isso leva alguns minutos`);
   let { text } = await callStructured({ ...STORYBOARD_CALL, input: header, system, log: opts.log });
 
-  // Up to two repairs. `strict` already guarantees the SHAPE, so anything wrong
-  // here is meaning: a zod cross-field rule, or a selector that is not in the
-  // inventory — and the second is checked locally, without spending a call.
+  // Up to two repairs. Since the move off Structured Outputs the SHAPE is no
+  // longer guaranteed by the server either, so this loop now sees three kinds of
+  // problem: a malformed object, a zod cross-field rule, and a selector that is
+  // not in the inventory — the last checked locally, without spending a call.
   for (let attempt = 0; attempt < 3; attempt++) {
     let sb: Storyboard | null = null;
     let problems: string[] = [];
@@ -164,14 +206,19 @@ export async function writeStoryboard(opts: WriteOptions): Promise<Storyboard> {
     }
 
     opts.log(`corrigindo ${problems.length} problema(s) no roteiro`);
-    // Only the problems go back, not the inventory — it is already in context.
-    // Each repair is a fresh call — Chat Completions has no conversation threading.
+    // The inventory goes back with every repair. Chat Completions is STATELESS —
+    // there is no conversation to inherit it from, and the commonest problem here
+    // is "target is not in the inventory". Asking for a valid selector without
+    // sending the list of valid selectors can only be answered by guessing, so
+    // the repair failed, burnt two more max-reasoning calls, and threw.
     ({ text } = await callStructured(
       {
         ...STORYBOARD_CALL,
         input:
-          `The storyboard you just produced:\n\n${text}\n\nhas problems. Fix ONLY these and return the whole ` +
-          `storyboard again:\n\n${problems.map((p) => `- ${p}`).join("\n")}`,
+          `## INVENTORY (the ONLY selectors you may use)\n${opts.inventory}\n\n` +
+          `## THE STORYBOARD YOU PRODUCED\n${text}\n\n` +
+          `## PROBLEMS — fix ONLY these and return the whole storyboard again\n` +
+          problems.map((p) => `- ${p}`).join("\n"),
         system,
         log: opts.log,
       },
@@ -189,10 +236,11 @@ export interface RefineOptions extends Omit<WriteOptions, "request"> {
 
 export async function refineStoryboard(opts: RefineOptions): Promise<Storyboard> {
   const system = systemFor(opts.silent ?? false);
-  opts.log(`revisando o roteiro com deepseek-v4-pro`);
+  opts.log(`revisando o roteiro com ${CHAT_MODEL}`);
   const input =
     `## ROTEIRO ATUAL\n${JSON.stringify(opts.current, null, 2)}\n\n` +
     `## INVENTORY (the ONLY selectors you may use)\n${opts.inventory}\n\n` +
+    readinessBlock(opts.readiness) +
     `## O QUE MUDAR (em português)\n${opts.instruction}`;
 
   let { text } = await callStructured({ ...STORYBOARD_CALL, input, system, log: opts.log });
@@ -215,14 +263,16 @@ export async function refineStoryboard(opts: RefineOptions): Promise<Storyboard>
     if (attempt === 2) {
       throw new ChatError(`a revisão não ficou válida:\n  ${problems.join("\n  ")}`);
     }
+    // Same reason as in `writeStoryboard`: the inventory has to travel with each
+    // repair, because Chat Completions carries nothing between calls.
     ({ text } = await callStructured(
       {
         ...STORYBOARD_CALL,
         input:
-          `The storyboard you just produced:\n\n${text}\n\nhas problems. Fix ONLY these and return the whole ` +
-          `storyboard again:\n\n${problems
-          .map((p) => `- ${p}`)
-          .join("\n")}`,
+          `## INVENTORY (the ONLY selectors you may use)\n${opts.inventory}\n\n` +
+          `## THE STORYBOARD YOU PRODUCED\n${text}\n\n` +
+          `## PROBLEMS — fix ONLY these and return the whole storyboard again\n` +
+          problems.map((p) => `- ${p}`).join("\n"),
         system,
         log: opts.log,
       },

@@ -232,6 +232,12 @@ Answer with ONE JSON object and nothing else:
   "startRoute": "/",
   "auth": { "required": false, "how": null, "username": null, "password": null },
   "prepare": { "commands": [{ "bin": "bash", "args": ["setup-demo.sh"], "cwd": "." }] }, // optional — omit entirely when not needed
+  "readiness": {
+    "loadingSelectors": ["[aria-busy=\\"true\\"]", ".commit-graph-skeleton"],
+    "settledSelectors": ["[data-testid=\\"commit-list\\"]"],
+    "slowActions": [{ "what": "clonar um repositório remoto", "timeoutMs": 60000 }],
+    "notes": ["..."]
+  },
   "suggestions": ["..."],
   "notes": ["..."]
 }
@@ -255,12 +261,38 @@ Rules that decide whether this works:
   idempotent or check for existing data — a second run must not break the first run's results.
   If the app works out of the box with no preparation, OMIT this field entirely (do NOT send
   \`"prepare": null\` or \`"prepare": {"commands": []}\`).
+- **\`readiness\`**: how this app shows that it is BUSY, and how a Playwright script can tell that it
+  finished. This is the field that decides whether the video shows the result of an action or shows
+  a spinner, so spend real effort on it — the recorder acts, waits for these signals, and only then
+  holds the frame.
+
+  Find them in the SOURCE, not by guessing: grep the components for \`aria-busy\`,
+  \`role="progressbar"\`, \`isLoading\`, \`isPending\`, \`isFetching\`, \`loading\`, \`Suspense\`
+  fallbacks, skeleton components, and whatever the app's data layer (React Query, SWR, a store)
+  calls its pending state. Then follow those flags to the class name or attribute they actually
+  render, because that is what a selector can see.
+
+  - \`loadingSelectors\`: CSS selectors that are visible ONLY while the app is working. They must
+    disappear when it is done — that is the entire contract, and a selector that is always on
+    screen makes every step wait for its full timeout. Prefer an attribute or a single class name
+    over a nested path.
+  - \`settledSelectors\`: CSS selectors whose APPEARANCE means an operation finished — the results
+    list, the loaded editor, the populated graph.
+  - \`slowActions\`: operations that take a long time, and how long to allow in ms. Be honest and
+    generous: a clone, a build, an install, a large import, anything that shells out. This is the
+    only way the script writer learns that one particular button needs sixty seconds instead of
+    the default fifteen. \`what\` is in Portuguese.
+  - If the app is entirely synchronous and never shows a loading state, send empty arrays — do NOT
+    invent selectors. A wrong selector here is worse than none: it makes every step burn its
+    ceiling waiting for something that will never go away.
+
 - **\`suggestions\`**: one to three things a viewer would find genuinely impressive, most compelling
   first, each phrased as an instruction to whoever writes the script ("mostre o grafo de commits e
   arraste um commit para outro branch para fazer o rebase"). This is offered to the operator as a
   ready-made answer to "what do you want to demonstrate?", so write it the way they would.
-- **Language**: \`suggestions\`, \`notes\` and \`auth.how\` in **Brazilian Portuguese**. Every other
-  field in English, exactly as spelled above.
+- **Language**: \`suggestions\`, \`notes\`, \`auth.how\`, \`readiness.notes\` and
+  \`readiness.slowActions[].what\` in **Brazilian Portuguese**. Every other field in English,
+  exactly as spelled above — CSS selectors are code, not prose.
 - Output the JSON object only. No prose around it.`;
 }
 

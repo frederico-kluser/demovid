@@ -4,7 +4,8 @@
       "the recorder child process stays alive after the script exits",
       "how do I pause and resume the screen recorder",
       "the mp4 came out truncated and will not play",
-      "resolve the browser window id for the capture"
+      "resolve the browser window id for the capture",
+      "the browser window opened partly off the monitor during recording"
     ],
     "must_not_trigger": [
       "magnified text looks blurry during the zoom",
@@ -64,6 +65,18 @@
       "path": "src/recorder/session-env.ts",
       "needle": "lastIndexOf(\")\")",
       "why": "o campo 2 de /proc/<pid>/stat é o nome do processo entre parênteses e pode conter parênteses; split ingênuo desalinha todos os campos seguintes"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/record.ts",
+      "needle": "plan.usable",
+      "why": "the clamp for the browser own UI. plan.window is the CONTENT and the OS window is content plus tab strip, so without this the window overflows the work area even when the content fits"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/resolution.ts",
+      "needle": "usable",
+      "why": "planCapture must publish the box it fitted against, because the only place the chrome height is knowable is after launch"
     },
     {
       "assert": "code-contains",

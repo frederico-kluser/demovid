@@ -39,6 +39,21 @@ export interface Inventory {
   origin: string;
   routes: string[];
   items: InventoryItem[];
+  /**
+   * Selectors that appear to mean "this app is busy", found during the crawl.
+   *
+   * Deliberately NOT held to the uniqueness rule that governs `items`, and the
+   * difference is not an oversight. A target has to be unique because the demo
+   * *acts* on exactly one element; a loading indicator is only ever asked "is any
+   * of you visible", so a selector matching four skeleton rows is the right
+   * answer rather than a rejected one.
+   *
+   * Also incomplete by construction: the crawl navigates and looks, so it can
+   * only see a spinner that happened to be on screen while it looked. That is why
+   * `pi` is asked the same question against the source code — the two lists
+   * cover different failure modes and are merged, never traded off.
+   */
+  loaders: string[];
   notes: string[];
 }
 
@@ -201,6 +216,66 @@ async function installNameShim(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Runs INSIDE the page. Returns SELECTORS that identify loading indicators, not
+ * elements.
+ *
+ * The two rules that govern `collectInPage` are both deliberately relaxed here,
+ * because a loading indicator is a different kind of thing from a target:
+ *
+ *  - **Uniqueness is not required.** The only question ever asked of these
+ *    selectors is "is any element matching you visible right now", so one that
+ *    matches six skeleton rows answers it correctly.
+ *  - **Visibility is not required.** A skeleton that is mounted but hidden is
+ *    exactly the markup worth knowing about — it is what will be shown when the
+ *    app next goes busy.
+ *
+ * What IS required is that the selector be reusable: an `aria-busy` attribute
+ * selector or a single class name, never a positional path that describes where
+ * one spinner happened to be in one render.
+ */
+/* eslint-disable */
+function collectLoadersInPage(): string[] {
+  const BUSY = /(spinner|skeleton|loading|loader|progress|shimmer|pulse|placeholder)/i;
+  // Utility classes from Tailwind and friends: they animate a spinner, but they
+  // also animate a dozen things that are not one, so a selector built on them
+  // would report the app permanently busy.
+  const UTILITY = /^(animate-|motion-|transition|duration-|ease-|w-|h-|rounded|bg-|text-|flex|grid|absolute|relative)/i;
+
+  const out = new Set<string>();
+
+  // ARIA first: the part an app is supposed to get right, and unambiguous when
+  // it is there. Published as the bare attribute selector — the point is to
+  // match whatever carries it next time, not this element.
+  if (document.querySelector('[aria-busy="true"]')) out.add('[aria-busy="true"]');
+  if (document.querySelector('[role="progressbar"]')) out.add('[role="progressbar"]');
+  if (document.querySelector("progress")) out.add("progress");
+  for (const attr of ["data-loading", "data-busy", "data-pending"]) {
+    if (document.querySelector(`[${attr}]`)) out.add(`[${attr}]`);
+  }
+
+  // Then class names, which is how most apps actually do it.
+  for (const el of Array.from(document.querySelectorAll("[class]")).slice(0, 4000)) {
+    const raw = el.getAttribute("class");
+    if (!raw || !BUSY.test(raw)) continue;
+    for (const cls of raw.split(/\s+/)) {
+      if (!cls || !BUSY.test(cls) || UTILITY.test(cls)) continue;
+      // A build-generated suffix makes the class useless across a rebuild, but
+      // the demo is recorded against THIS build, so it is still worth having.
+      try {
+        const sel = `.${CSS.escape(cls)}`;
+        if (document.querySelectorAll(sel).length > 0) out.add(sel);
+      } catch {
+        /* a class name CSS.escape cannot render is not addressable */
+      }
+      if (out.size >= 24) return Array.from(out);
+    }
+  }
+
+  return Array.from(out);
+}
+/* eslint-enable */
+
 export async function crawlApp(opts: CrawlOptions): Promise<Inventory> {
   const { page, startUrl, scan, log } = opts;
   const maxRoutes = opts.maxRoutes ?? 8;
@@ -217,6 +292,7 @@ export async function crawlApp(opts: CrawlOptions): Promise<Inventory> {
 
   const visited: string[] = [];
   const items: InventoryItem[] = [];
+  const loaders = new Set<string>();
 
   while (queue.length > 0 && visited.length < maxRoutes) {
     const route = queue.shift();
@@ -225,6 +301,15 @@ export async function crawlApp(opts: CrawlOptions): Promise<Inventory> {
     const url = new URL(route, origin).href;
     try {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
+
+      // Sampled HERE, in the gap between `domcontentloaded` and `networkidle`,
+      // because that gap is the only moment a spinner exists. Wait for the route
+      // to settle first — as everything else in this loop does — and the app is
+      // by definition no longer loading, so the busy-state markup has been
+      // unmounted and the crawl would conclude the app has none. Best-effort.
+      const busy = await page.evaluate(collectLoadersInPage).catch(() => [] as string[]);
+      for (const s of busy) loaders.add(s);
+
       await page.waitForLoadState("networkidle", { timeout: 4000 }).catch(() => {});
     } catch {
       notes.push(`rota ${route} não carregou`);
@@ -243,6 +328,12 @@ export async function crawlApp(opts: CrawlOptions): Promise<Inventory> {
     });
     for (const f of found) items.push({ ...f, route });
     log(`  ${route}: ${found.length} elemento(s) endereçáveis`);
+
+    // A second pass, now that the route has settled. This one finds the markup
+    // an app keeps mounted but hidden — a skeleton template, a progress bar at
+    // zero — which the busy-time sample above cannot distinguish from the rest.
+    const resting = await page.evaluate(collectLoadersInPage).catch(() => [] as string[]);
+    for (const s of resting) loaders.add(s);
 
     // Same-origin links, for the routes the filesystem did not reveal.
     if (visited.length + queue.length < maxRoutes) {
@@ -270,7 +361,14 @@ export async function crawlApp(opts: CrawlOptions): Promise<Inventory> {
     notes.push("nenhum elemento endereçável encontrado — o app pode estar atrás de login");
   }
 
-  return { origin, routes: visited, items, notes };
+  if (loaders.size === 0) {
+    notes.push(
+      "não vi nenhum indicador de carregamento durante o crawl — ou o app não usa, " +
+        "ou eles não estavam na tela nesse momento",
+    );
+  }
+
+  return { origin, routes: visited, items, loaders: [...loaders], notes };
 }
 
 /**
@@ -292,6 +390,17 @@ export function serializeInventory(inv: Inventory, maxItems = 90): string {
     "ELEMENTOS (seletor | tipo | rota | texto visível):",
     ...sorted.map((i) => `${i.sel} | ${i.kind} | ${i.route} | ${i.text || "—"}`),
   ].filter(Boolean);
+
+  // Listed separately from ELEMENTOS, and labelled as not-a-target, because the
+  // model's hardest rule is "copy a selector from the inventory verbatim" — put
+  // these in the same table and it will eventually click a spinner.
+  if (inv.loaders.length > 0) {
+    lines.push(
+      "",
+      "INDICADORES DE CARREGAMENTO (não são alvos de clique — servem para `wait` com waitFor:\"hidden\"):",
+      ...inv.loaders.map((s) => `${s}`),
+    );
+  }
 
   if (inv.notes.length > 0) lines.push("", `observações: ${inv.notes.join("; ")}`);
   return lines.join("\n");

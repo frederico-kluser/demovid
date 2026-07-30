@@ -95,6 +95,17 @@ export interface CapturePlan {
   target: { w: number; h: number };
   /** The OS window to open, in physical pixels. */
   window: { w: number; h: number; x: number; y: number };
+  /**
+   * The box on the chosen monitor the window may occupy — the monitor clipped to
+   * `_NET_WORKAREA`, minus the WM's decoration.
+   *
+   * Published because `window` describes the CONTENT and the real OS window is
+   * content **plus the browser's own UI**, whose height is only knowable after
+   * launch. Whoever measures that height clamps against this box; a hardcoded
+   * allowance here was tried and was wrong on the first machine that ran it (see
+   * `chromeHeightPx` in `src/browser.ts`).
+   */
+  usable: Rect;
   /** Launch-flag density. Always 1 for mobile — see below. */
   deviceScaleFactor: number;
   /** What the page will believe its viewport is, in CSS pixels. */
@@ -137,14 +148,28 @@ export function planCapture(target: ResolutionPreset, opts: PlanOptions): Captur
   const monitor = pickMonitor(opts.monitors, opts.monitorName);
 
   if (!monitor) {
-    // No X11 information at all. Honour the request literally and let the
-    // window manager clamp — better than inventing a box out of nothing.
-    warnings.push("não consegui ler os monitores — usando a resolução pedida sem verificar se cabe");
-    const fallbackX = opts.monitors[0]?.x ?? 0;
-    const fallbackY = opts.monitors[0]?.y ?? 0;
+    // Honour the request literally and let the window manager clamp — better
+    // than inventing a box out of nothing. Two different ways to get here, and
+    // saying the wrong one sends the reader to the wrong place:
+    //
+    //  - the monitor list is EMPTY: no X11 information at all, so there is no
+    //    origin to fall back to either and (0,0) is the only honest answer;
+    //  - `--monitor` named an output that does not exist: the monitors were read
+    //    perfectly well, so place the window on the primary rather than nowhere.
+    //    `opts.monitors[0]` was used here and is not the primary — `pickMonitor`
+    //    prefers `m.primary` precisely because the first entry often is not.
+    const fallback = opts.monitors.find((m) => m.primary) ?? opts.monitors[0] ?? null;
+    warnings.push(
+      fallback
+        ? `não achei o monitor "${opts.monitorName}" — usando ${fallback.name} e a resolução pedida sem verificar se cabe`
+        : "não consegui ler os monitores — usando a resolução pedida sem verificar se cabe",
+    );
+    const fallbackX = fallback?.x ?? 0;
+    const fallbackY = fallback?.y ?? 0;
     return {
       target: { w: target.w, h: target.h },
       window: { w: even(target.w), h: even(target.h), x: fallbackX, y: fallbackY },
+      usable: { x: fallbackX, y: fallbackY, w: even(target.w), h: even(target.h) },
       deviceScaleFactor: 1,
       cssViewport: { w: target.cssWidth ?? target.w, h: 0 },
       mobile: target.mobile ?? false,
@@ -194,6 +219,7 @@ export function planCapture(target: ResolutionPreset, opts: PlanOptions): Captur
     return {
       target: { w: target.w, h: target.h },
       window: { w: windowW, h: windowH, x: box.x, y: box.y },
+      usable: box,
       deviceScaleFactor: dsf,
       cssViewport: { w: cssWidth, h: Math.round(cssWidth * aspect) },
       mobile: true,
@@ -226,6 +252,7 @@ export function planCapture(target: ResolutionPreset, opts: PlanOptions): Captur
   return {
     target: { w: target.w, h: target.h },
     window: { w: windowW, h: windowH, x: box.x, y: box.y },
+    usable: box,
     deviceScaleFactor: 1,
     cssViewport: { w: windowW, h: windowH },
     mobile: false,

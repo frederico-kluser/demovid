@@ -26,7 +26,7 @@
  * cut. An enum the renderer cannot import is a runtime crash in the Studio.
  */
 import { z } from "zod";
-import { callStructured, ChatError, stripNulls } from "./responses.js";
+import { callStructured, CHAT_MODEL, ChatError, stripNulls } from "./responses.js";
 
 /** What the renderer can actually draw. `corte` means "no Transition element". */
 export const TRANSITIONS = ["corte", "fade", "slide", "wipe"] as const;
@@ -200,7 +200,7 @@ export async function writeCommercial(opts: CommercialOptions): Promise<Commerci
     `## O QUE ENTREGAR\nA montagem: gancho, uma entrada por cena e o cartão de fecho.`;
 
   const log = opts.log ?? ((): void => {});
-  log(`escrevendo a montagem com deepseek-v4-pro`);
+  log(`escrevendo a montagem com ${CHAT_MODEL}`);
 
   const { text } = await callStructured({
     name: "commercial",

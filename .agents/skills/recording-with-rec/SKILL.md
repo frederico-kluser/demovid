@@ -79,6 +79,31 @@ the window's own buffer and is structurally immune (`src/record.ts:332@72303c9`)
 Safety property, not a quality one. Removing the browser's own UI costs an ffmpeg pass, and that is
 the cheaper half of the trade.
 
+### The window still has to FIT — `plan.window` is not `plan.target`
+
+Window capture makes the recording immune to what is stacked *above* the browser. It does not make
+the window fit on the monitor, and those are separate problems that look alike in a bad take.
+
+`planCapture` fits the request to the monitor's work area: `plan.target` is what was asked for,
+`plan.window` is what fits, and `scaleNeeded` records that they differ. Resizing to `plan.target`
+after launch re-creates the size that was just measured not to fit — the window hangs off the screen
+and the upscale the fit was avoiding happens in post anyway. Resize to `plan.window`.
+
+Then subtract the browser's own UI. `plan.window` describes the CONTENT; the OS window is content
+**plus** the tab strip and omnibox, so `chromeHeightPx` comes out of `plan.usable.h` after launch.
+It is clamped there rather than reserved in `planCapture` because the height is not knowable before
+launch — a hardcoded 88px was the first version of `chromeHeightPx` and was wrong on the first
+machine that ran it. `usableContentBox` subtracts `_NET_WORKAREA` and `_NET_FRAME_EXTENTS`; it has
+never known anything about the browser's UI.
+
+Giving up pixels here is safe: `finalizeCapture` re-derives whether a scale is needed from the
+geometry that actually resulted, so the file still lands on the requested resolution.
+
+Nothing validates the window's POSITION against the monitor after launch — the convergence loop in
+`src/record.ts` checks height only. `defaultWindowOrigin()` picks the primary monitor's origin for
+the callers that have no plan, which is why `(0,0)` is wrong on a multi-monitor desktop whose primary
+is not the leftmost output.
+
 ### `importSessionEnv()` runs once, in the CLI, before anything reads `DISPLAY`
 
 It finds the compositor (`src/recorder/session-env.ts:109@72303c9`), reads its `/proc/<pid>/environ`,

@@ -1,6 +1,6 @@
 ---
 name: authoring-storyboards-and-presets
-description: Explains why demovid validates a storyboard with a hand-written JSON Schema AND a zod schema, which JSON Schema keywords are forbidden under strict mode, and how the preset and locale layers compose. Use whenever you add or change a storyboard action, edit src/storyboard.ts or anything under src/presets/, add a preset or locale, tune pacing or dwell time, or debug a hard 400 from the OpenAI Structured Outputs API. Also use before adding any field to a preset, because unread preset fields already exist in this repo and adding another teaches future readers that they work.
+description: Explains why demovid ships a hand-written JSON Schema AND a zod schema when only zod still enforces anything, which JSON Schema keywords stay banned and why the ban outlived the API that punished it, and how the preset and locale layers compose. Use whenever you add or change a storyboard action, edit src/storyboard.ts or anything under src/presets/, add a preset or locale, tune pacing or dwell time, or debug a storyboard that came back the wrong shape. Also use before adding any field to a preset, because unread preset fields already exist in this repo and adding another teaches future readers that they work.
 metadata:
   type: task
   verification_signal: npm test
@@ -14,28 +14,62 @@ Any change to the storyboard schema, the action vocabulary, a preset, or a local
 
 ## Injected knowledge
 
-### Two schemas, and they are not redundant
+### Two schemas, and only one of them still validates anything
 
-`src/storyboard.ts:1-15@a394a34` states the split:
+`src/storyboard.ts:1-15@a394a34` describes a split that the 2026-07-30 migration off OpenAI's
+Responses API changed underneath. Read the split as it is **now**:
 
-- **JSON Schema with `strict: true` guarantees the SHAPE** coming out of the model. A malformed
-  object is impossible.
-- **Zod guarantees the MEANING after parsing** — that a `click` has a selector, that a `wait` has
-  something to wait for, that durations are sane.
+- **The JSON Schema is a PROMPT.** DeepSeek offers only `response_format: {type:"json_object"}`, so
+  `callStructured` inlines the hand-written schema into the system prompt as instructions
+  (`src/openai/responses.ts`). `json_object` guarantees the response parses as JSON. It guarantees
+  nothing at all about the shape.
+- **Zod guarantees everything else** — that a `click` has a selector, that a `wait` has something to
+  wait for, that durations are sane, and now also that the object has the fields it claims to.
 
-Neither replaces the other. Deleting the zod pass because "the schema already validates" removes
-every cross-field rule; deleting the JSON Schema removes the guarantee that parsing succeeds at all.
+They are no longer complementary: `parseStoryboard` is the only gate. Deleting the zod pass because
+"the schema already validates" does not degrade validation, it **removes** it. A malformed object is
+no longer impossible, so the repair loop in `src/openai/script.ts` sees shape errors that used to be
+unreachable — and it must, because nothing upstream will catch them.
 
-### The keyword blacklist is a hard 400, not a warning
+### Ask for the maximum reasoning; let the API be the one to say no
+
+The policy is "always the most DeepSeek will give us", and only the API knows what that is. So
+`callStructured` walks two ladders for two different failures:
+
+- **Effort**, highest first: `max` → `high` → no reasoning parameters at all. A value the API refuses
+  comes back as a 400 naming `reasoning_effort` or `thinking`, which costs a rung and a line in the
+  log, never the run.
+- **Tokens**, smallest first, and only once an effort is settled: 32k → 64k on
+  `finish_reason: "length"`. A reasoning model can spend the whole ceiling thinking and return a body
+  that is JSON cut mid-string; before this it reached zod and was reported as "o modelo não produziu
+  um roteiro válido", which blames the model for running out of room.
+
+**None of this is verified against the live API.** The reference machine's `DEEPSEEK_API_KEY` answers
+401 to `GET /v1/models`, so whether `max` exists — or whether `thinking: {type:"enabled"}` is a
+DeepSeek parameter at all rather than one borrowed from another provider — is unknown. The ladder is
+what makes the ignorance survivable, not a substitute for checking. With a working key, probe first
+and prune the ladder to the rungs that are real.
+
+One hard requirement that is easy to reword away: the system prompt must contain the literal word
+**json**, because `response_format: {type:"json_object"}` rejects a request whose prompt never says
+it. "Matching this schema" does not contain it. Pinned by a test in `test/scriptflow.test.ts`.
+
+### The keyword blacklist is now vestigial — keep it anyway
 
 Deliberately absent from the JSON Schema: `pattern`, `minLength`, `maxLength`, `minItems`,
-`maxItems`. OpenAI's supported-keyword list still excludes them under `strict`, and a rejected schema
-is a **hard 400 that kills the feature** (`src/storyboard.ts:12-15@a394a34`). Those constraints live
-in the zod pass instead.
+`maxItems`. Under OpenAI `strict` these were a **hard 400 that killed the feature**
+(`src/storyboard.ts:12-15@a394a34`). Under DeepSeek no server validates the schema at all, so nothing
+400s and the ban costs nothing to violate.
 
-`strict` also forces every property into `required`, with `["string","null"]` unions standing in for
-optionals (`src/storyboard.ts:111-137@a394a34`). A new optional field is expressed that way, never by
-omitting it from `required`.
+Keep it regardless, for two reasons that outlive the provider: those constraints belong in the zod
+pass where they are actually enforced, and the schema travels as prompt text now, so every keyword
+that cannot be enforced is a rule the model is told to follow and then silently graded against
+nothing. If the provider ever moves back to server-side `strict`, a schema that kept the ban still
+works and one that did not is a hard 400 on the first call.
+
+The `["string","null"]` unions standing in for optionals (`src/storyboard.ts:111-137@a394a34`) are
+likewise no longer *forced* by `strict`, but `stripNulls` and the `.nullish()` zod fields are built
+around them — see `authoring-commercial-edits`. Express a new optional field that way.
 
 ### `required` order is load-bearing
 

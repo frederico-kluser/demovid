@@ -51,7 +51,7 @@ writes eight words for a 900 ms shot, and nothing downstream can lengthen the sh
 
 ### `say` is spoken Portuguese, not written Portuguese
 
-`src/openai/script.ts:53` states it as a hard rule, and the consequences are spelled
+`systemFor` in `src/openai/script.ts:52` states it as a hard rule, and the consequences are spelled
 out because "write naturally" does not survive contact with a model: short sentences, no
 bullet points, no parentheses, no URLs, no markdown. Numbers as words when short
 ("vinte e quatro"), digits when long.
@@ -83,7 +83,7 @@ more words per second just by asking for them.
 
 ### Length is a rule, not a preference
 
-`src/openai/script.ts:60`: prefer 5 to 9 steps; fewer than 4 is not a demo, more than 12
+`systemFor` in `src/openai/script.ts:58`: prefer 5 to 9 steps; fewer than 4 is not a demo, more than 12
 is a manual. And one to two sentences per step, because the narration of a step plays
 while that step happens — a third sentence is narration playing over a finished action.
 
@@ -94,7 +94,7 @@ thing — a demo that needs nine steps needs a video, and saying that beats deli
 
 ### The opening has a defined move
 
-`src/openai/script.ts:62`: start with a `wait` step that introduces the app while the
+`systemFor` in `src/openai/script.ts:61`: start with a `wait` step that introduces the app while the
 first sentence plays. Not a click. The viewer needs one beat to understand what they are
 looking at, and a demo whose first frame is already mid-interaction spends its first
 sentence being confusing.
@@ -114,7 +114,7 @@ if it needs more, the scene does not want text.
 
 ### A caption for silent output is a different field with a different job
 
-Not "a shorter `say`". `src/openai/script.ts:66` explains it: a narrated line can depend
+Not "a shorter `say`". `src/openai/script.ts:67` explains it: a narrated line can depend
 on the screen moving, because voice and motion arrive together. A caption in a looping
 GIF is read **cold, possibly starting from the middle of the loop**, with nothing to fill
 in what it left out.

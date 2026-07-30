@@ -39,7 +39,7 @@ Carries how demovid turns a finished take into a commercial edit — the model c
 
 ### `authoring-storyboards-and-presets`
 
-Explains why demovid validates a storyboard with a hand-written JSON Schema AND a zod schema, which JSON Schema keywords are forbidden under strict mode, and how the preset and locale layers compose. Use whenever you add or change a storyboard action, edit src/storyboard.ts or anything under src/presets/, add a preset or locale, tune pacing or dwell time, or debug a hard 400 from the OpenAI Structured Outputs API. Also use before adding any field to a preset, because unread preset fields already exist in this repo and adding another teaches future readers that they work.
+Explains why demovid ships a hand-written JSON Schema AND a zod schema when only zod still enforces anything, which JSON Schema keywords stay banned and why the ban outlived the API that punished it, and how the preset and locale layers compose. Use whenever you add or change a storyboard action, edit src/storyboard.ts or anything under src/presets/, add a preset or locale, tune pacing or dwell time, or debug a storyboard that came back the wrong shape. Also use before adding any field to a preset, because unread preset fields already exist in this repo and adding another teaches future readers that they work.
 
 *Verified by:* `npm test`
 

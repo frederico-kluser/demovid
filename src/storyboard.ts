@@ -24,6 +24,20 @@ import { VOICES } from "./openai/tts.js";
 export const ACTIONS = ["goto", "click", "type", "hover", "scroll", "focus", "wait"] as const;
 export type Action = (typeof ACTIONS)[number];
 
+/**
+ * What a `wait` is waiting for. Playwright's four locator states, no more.
+ *
+ * `hidden` is the one that motivated this field, and it is not reachable by any
+ * combination of the others: waiting for a spinner to APPEAR is waiting for the
+ * app to get busy, and every storyboard that did it recorded the busy state and
+ * then moved on. What a demo needs is the moment the spinner leaves.
+ */
+export const WAIT_STATES = ["visible", "hidden", "attached", "detached"] as const;
+export type WaitState = (typeof WAIT_STATES)[number];
+
+/** The ceiling for a step's waits when it does not set its own. */
+export const DEFAULT_STEP_TIMEOUT_MS = 15_000;
+
 const StepSchema = z
   .object({
     action: z.enum(ACTIONS),
@@ -60,6 +74,39 @@ const StepSchema = z
 
     /** Extra hold after the step's audio finishes, in ms. */
     holdMs: z.number().int().min(0).max(30_000).optional(),
+
+    /**
+     * For `wait`: which state `target` has to reach. Defaults to `visible`, which
+     * is what `wait` did before this field existed — an old storyboard keeps its
+     * exact behaviour.
+     */
+    waitFor: z.enum(WAIT_STATES).optional(),
+
+    /**
+     * A selector that must be VISIBLE before the step is considered done.
+     *
+     * This is the "I clicked and now the result has to arrive" case, and it is a
+     * different thing from `target`: `target` is what the step acts ON, `expect`
+     * is what the action was FOR. Checked after the automatic settle, so it costs
+     * nothing when the app was already quiet, and it is the only mechanism that
+     * can wait for something the settle cannot see — a result that takes two
+     * round trips, a list that repaints after a websocket frame.
+     *
+     * Unlike `target` this is NOT constrained to the inventory: the element it
+     * names frequently does not exist yet at crawl time, which is the entire
+     * reason for waiting on it.
+     */
+    expect: z.string().optional(),
+
+    /**
+     * Ceiling for this step's waits, in ms. Defaults to `DEFAULT_STEP_TIMEOUT_MS`.
+     *
+     * Exists because the default is a guess about a class of app, and the demos
+     * that need waiting most — a clone, a build, an import — are exactly the ones
+     * that blow through it. Capped at two minutes: past that the honest answer is
+     * that the operation does not belong in a demo take.
+     */
+    timeoutMs: z.number().int().min(100).max(120_000).optional(),
   })
   .superRefine((step, ctx) => {
     const needsTarget: Action[] = ["click", "type", "hover", "focus"];
@@ -77,6 +124,21 @@ const StepSchema = z
         code: "custom",
         message: "`wait` precisa de `target` (espera o seletor) ou `value` (espera N ms) — " +
           "esperar por nada é como um roteiro trava",
+      });
+    }
+    // `waitFor` describes a state a TARGET reaches. On a timed wait there is no
+    // target to reach it, so the field would silently do nothing — and a silent
+    // no-op in a wait is exactly the bug this vocabulary exists to prevent.
+    if (step.waitFor && !step.target) {
+      ctx.addIssue({
+        code: "custom",
+        message: "`waitFor` diz em que estado o `target` tem que ficar — sem `target` ele não espera nada",
+      });
+    }
+    if (step.waitFor && step.action !== "wait") {
+      ctx.addIssue({
+        code: "custom",
+        message: `\`waitFor\` só vale na ação "wait" — para esperar depois de "${step.action}", use \`expect\``,
       });
     }
   });
@@ -137,7 +199,18 @@ export const STORYBOARD_JSON_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["action", "target", "value", "say", "caption", "zoom", "holdMs"],
+        required: [
+          "action",
+          "target",
+          "value",
+          "waitFor",
+          "expect",
+          "timeoutMs",
+          "say",
+          "caption",
+          "zoom",
+          "holdMs",
+        ],
         properties: {
           action: { type: "string", enum: [...ACTIONS] },
           target: {
@@ -149,6 +222,27 @@ export const STORYBOARD_JSON_SCHEMA = {
           value: {
             type: ["string", "null"],
             description: "URL para goto, texto para type, milissegundos para wait. null se não se aplica.",
+          },
+          waitFor: {
+            type: ["string", "null"],
+            enum: [...WAIT_STATES, null],
+            description:
+              'Só na ação "wait": em que estado o `target` tem que ficar. "visible" espera aparecer, ' +
+              '"hidden" espera SUMIR — é assim que se espera um spinner terminar. null usa "visible".',
+          },
+          expect: {
+            type: ["string", "null"],
+            description:
+              "Seletor que precisa estar VISÍVEL para o passo ser dado por concluído. Use depois de uma " +
+              "ação que dispara carregamento, nomeando o RESULTADO que deve chegar. Diferente de `target`: " +
+              "`target` é onde a ação acontece, `expect` é o que ela produz. Pode ser um seletor que ainda " +
+              "não existe no inventário. null quando a ação não produz nada novo.",
+          },
+          timeoutMs: {
+            type: ["integer", "null"],
+            description:
+              "Teto de espera deste passo em ms, de 100 a 120000. Aumente para operações reconhecidamente " +
+              "lentas (clone, build, importação). null usa 15000.",
           },
           say: {
             type: ["string", "null"],

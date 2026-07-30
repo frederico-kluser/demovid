@@ -27,7 +27,7 @@
  * approve loop affordable at all.
  */
 import { writeFile } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 import { stringify as toYaml } from "yaml";
 import { run } from "./exec.js";
 import { launchBrowser } from "./browser.js";
@@ -35,7 +35,7 @@ import { defaultWindowOrigin } from "./x11.js";
 import { allowedSelectors, crawlApp, serializeInventory } from "./project/inventory.js";
 import { ensureDevServer, type DevOverride } from "./project/devserver.js";
 import { hasGitRepo, scanProject, type ProjectScan } from "./project/scan.js";
-import { CONFIG_FILE, fingerprint, readConfig, writeConfig, type DiscoveredConfig, type ProjectConfig } from "./project/config.js";
+import { CONFIG_FILE, fingerprint, readConfig, serializeReadiness, writeConfig, type DiscoveredConfig, type ProjectConfig } from "./project/config.js";
 import { discoverProject, DiscoveryError } from "./project/discover.js";
 import { refineStoryboard, writeStoryboard } from "./openai/script.js";
 import { ask, askRequired, closePrompt, gate, isInteractive } from "./prompt.js";
@@ -197,7 +197,38 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
     }
   }
 
-
+  // ── preparação ────────────────────────────────────────────────────────────
+  //
+  // BEFORE the dev server, which is what `src/project/discover.ts` promises the
+  // agent when it asks for these commands — and the only ordering that works.
+  // These commands exist to CREATE the data the app displays: a repository for a
+  // git browser, rows for a dashboard, files for an editor. Running them later
+  // means `crawlApp` inventories the empty app, the storyboard is written against
+  // elements that do not exist, and the rehearsal fails on every one of them. The
+  // feature was inert for its own motivating example until this moved up here.
+  //
+  // `bin`, `args` and `cwd` are written by the agent, so `cwd` is confined to the
+  // project: `resolve(dir, "../..")` would otherwise escape it. `run()` takes an
+  // array and never a shell, so the arguments cannot become shell metacharacters.
+  if (!opts.skipPrepare && config?.prepare?.commands.length) {
+    log("preparando dados de demonstração");
+    const root = resolve(dir);
+    for (const cmd of config.prepare.commands) {
+      const cwd = resolve(root, cmd.cwd);
+      const rel = relative(root, cwd);
+      if (rel.startsWith("..") || isAbsolute(rel)) {
+        log(`  pulei ${cmd.bin}: cwd "${cmd.cwd}" sai do projeto`);
+        continue;
+      }
+      log(`  $ ${cmd.bin} ${cmd.args.join(" ")}`);
+      // A failed preparation is a warning, not the end of the run: the app may
+      // well demo fine without it, and losing the whole session to a seed script
+      // that was already idempotent-by-accident is the worse trade.
+      await run(cmd.bin, cmd.args, { cwd }).catch((e: unknown) => {
+        log(`  aviso: ${cmd.bin} falhou — ${(e as Error).message}`);
+      });
+    }
+  }
 
   const server = opts.url
     ? { url: opts.url, started: false, stop: async (): Promise<void> => {} }
@@ -312,11 +343,23 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
     // ── roteiro ───────────────────────────────────────────────────────────
     const inventoryText = serializeInventory(inventory);
     const allowed = allowedSelectors(inventory);
+    const readinessText = serializeReadiness(config?.readiness);
+
+    // Two sources, merged rather than chosen between, because they fail
+    // differently: the crawl sees only what was on screen when it looked, and the
+    // agent sees only what is written in the source. Neither is a superset.
+    const loadingSelectors = [
+      ...new Set([...inventory.loaders, ...(config?.readiness?.loadingSelectors ?? [])]),
+    ];
+    if (loadingSelectors.length > 0) {
+      log(`${loadingSelectors.length} indicador(es) de carregamento — o app será esperado a cada ação`);
+    }
 
     let storyboard = await writeStoryboard({
       request,
       inventory: inventoryText,
       allowed,
+      readiness: readinessText,
       appName: scan.name,
       url: server.url,
       silent,
@@ -341,6 +384,7 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
       const rehearsal = await record({
         ...opts.recording,
         storyboard,
+        loadingSelectors,
         rehearse: true,
         onLog: log,
       });
@@ -362,21 +406,12 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
         instruction: answer.text,
         inventory: inventoryText,
         allowed,
+        readiness: readinessText,
         appName: scan.name,
         url: server.url,
         silent,
         log,
       });
-    }
-
-    // ── preparação ─────────────────────────────────────────────────────────
-    if (!opts.skipPrepare && config?.prepare?.commands.length) {
-      log("preparando dados de demonstração");
-      for (const cmd of config.prepare.commands) {
-        const cwd = resolve(dir, cmd.cwd);
-        log(`  $ ${cmd.bin} ${cmd.args.join(" ")}`);
-        await run(cmd.bin, cmd.args, { cwd });
-      }
     }
 
     // ── gravar ────────────────────────────────────────────────────────────
@@ -386,7 +421,13 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
       resolve(dir, `${basename(storyboardPath).replace(/\.ya?ml$/, "")}.${ext}`);
 
     const t0 = Date.now();
-    const report = await record({ ...opts.recording, storyboard, output, onLog: log });
+    const report = await record({
+      ...opts.recording,
+      storyboard,
+      output,
+      loadingSelectors,
+      onLog: log,
+    });
     const failed = report.steps.filter((s) => !s.ok);
 
     for (const w of report.warnings) log(`aviso: ${w}`);

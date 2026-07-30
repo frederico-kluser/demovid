@@ -34,6 +34,14 @@ export interface RunOptions {
    * say the same thing.
    */
   cwd?: string;
+  /**
+   * Kill the child after this many ms. Unset means wait forever, which is the
+   * right default for the commands whose duration is the point (ffmpeg, the
+   * package manager) and the wrong one for anything that talks to the window
+   * manager: `xdotool --sync` blocks until the WM confirms, and a WM that
+   * declines the request never does.
+   */
+  timeoutMs?: number;
 }
 
 const INSTALL_HINTS: Record<string, string> = {
@@ -106,6 +114,7 @@ export async function run(
       encoding: "utf8",
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
       ...(opts.env ? { env: { ...process.env, ...opts.env } } : {}),
+      ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
     });
     return { stdout: stdout.toString(), stderr: stderr.toString() };
   } catch (err: unknown) {

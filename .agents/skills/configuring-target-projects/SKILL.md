@@ -102,6 +102,32 @@ one on a version bump that changes nothing about how the app starts. The file is
 design, so it is parsed as hostile input on every read, and a broken one degrades to a fresh discovery
 rather than crashing a run the operator cannot otherwise start.
 
+### `prepare` runs before the dev server, and that ordering is the whole feature
+
+Some apps have nothing to show until something exists: a git browser needs a repository, a dashboard
+needs rows, an editor needs files. `prepare.commands` in `.demovid.json` is the agent's answer to
+that — `{bin, args, cwd}` triples it writes when it recognises the app displays data it must create.
+
+The ordering is not a preference. The commands run **before `ensureDevServer`**, because the consumer
+is `crawlApp`: run them after the crawl and the inventory is of the empty app, the storyboard is
+written against elements that do not exist, and every step fails in rehearsal. Shipped the other way
+round once and the feature was inert for the exact example that motivated it. `src/project/discover.ts`
+promises the agent this ordering in the prompt, so moving the block breaks a contract the model was
+told about.
+
+Two properties that are easy to drop when editing this:
+
+- **`cwd` is confined to the project.** It is agent-written, and `resolve(dir, "../..")` escapes to
+  anywhere on disk. A command whose `cwd` resolves outside the project root is skipped and named,
+  not run. `run()` already covers the argument side — array args, never a shell — but that says
+  nothing about *where*.
+- **A failure is a warning, not the end of the run.** The app may demo fine without the seed, and
+  taking down a whole session over a preparation step is the worse trade. It is the same degrade-
+  instead-of-throw posture the post-MP4 stages take.
+
+`--no-prepare` skips the block entirely, for when the data is already there and the commands are not
+as idempotent as the prompt asked them to be.
+
 ### The agent is spawned, and awaited on `exit`
 
 The general rule lives in `following-typescript-conventions`. The short version: `execFile` resolves

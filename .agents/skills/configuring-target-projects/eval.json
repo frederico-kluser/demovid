@@ -81,6 +81,18 @@
       "why": "finally does not run on a signal, and the orphan then holds the port"
     },
     {
+      "assert": "code-contains",
+      "path": "src/scriptflow.ts",
+      "needle": "skipPrepare",
+      "why": "the prepare block and its --no-prepare escape hatch. Ordering is what actually matters here and no assert can express 'before ensureDevServer', so this only proves the feature exists — the ordering claim is carried by prose and by the promise the discover.ts prompt makes to the agent"
+    },
+    {
+      "assert": "code-contains",
+      "path": "src/scriptflow.ts",
+      "needle": "isAbsolute",
+      "why": "cwd is agent-written and resolve(dir, \"../..\") escapes the project. This is the containment check; without it a discovery run can be talked into running commands anywhere on disk"
+    },
+    {
       "assert": "file-exists",
       "path": "test/project-config.test.ts",
       "why": "the regressions are pinned separately because three defects had to line up to produce the reported failure"
