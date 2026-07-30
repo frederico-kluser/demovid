@@ -1,9 +1,20 @@
 /**
  * The guided flow: `npx demovid` inside a project, and a video comes out.
  *
- *   scan → dev server → crawl → ask → gpt-5.4 → rehearse → approve → record
+ *   scan → configure → dev server → crawl → ask → gpt-5.4 → rehearse → approve → record
  *
- * Two things shape the order.
+ * Three things shape the order.
+ *
+ * **Configuration is deterministic first, agent second.** `scan.ts` answers most
+ * projects from their manifests and build config, for free and instantly. The
+ * `pi` agent is asked only for what no file states plainly — and its answer is
+ * cached in the project's `.demovid.json`, so it is asked once per project
+ * rather than once per run. When the scan is confident the agent's infrastructure
+ * answer is discarded in favour of the measured one; the agent is still worth
+ * asking, because authentication and "what is worth showing" have no deterministic
+ * source at all.
+ *
+ * Two more things shape the order.
  *
  * **The rehearsal happens before the gate, not after.** Showing the operator a
  * plan they cannot evaluate is worse than not showing it: they would be
@@ -20,8 +31,10 @@ import { basename, resolve } from "node:path";
 import { stringify as toYaml } from "yaml";
 import { launchBrowser } from "./browser.js";
 import { allowedSelectors, crawlApp, serializeInventory } from "./project/inventory.js";
-import { ensureDevServer } from "./project/devserver.js";
-import { hasGitRepo, scanProject } from "./project/scan.js";
+import { ensureDevServer, type DevOverride } from "./project/devserver.js";
+import { hasGitRepo, scanProject, type ProjectScan } from "./project/scan.js";
+import { CONFIG_FILE, fingerprint, readConfig, writeConfig, type DiscoveredConfig, type ProjectConfig } from "./project/config.js";
+import { discoverProject, DiscoveryError } from "./project/discover.js";
 import { refineStoryboard, writeStoryboard } from "./openai/script.js";
 import { ask, askRequired, closePrompt, gate, isInteractive } from "./prompt.js";
 import { record, type RecordOptions, type RecordReport } from "./record.js";
@@ -45,6 +58,8 @@ export interface ScriptFlowOptions {
   /** `--voice` / `--wpm`, stamped onto the generated storyboard. */
   voice?: Voice | undefined;
   wpm?: number | undefined;
+  /** `--no-discover`: never call the agent, even when the scan is unsure. */
+  noDiscover?: boolean | undefined;
   /** Everything `record()` takes: resolution, chrome mode, output path. */
   recording: Omit<RecordOptions, "storyboard" | "rehearse" | "onLog">;
 }
@@ -69,6 +84,74 @@ function printPlan(sb: Storyboard, report: RecordReport): void {
       ? `  ensaio: todos os ${report.steps.length} passos funcionaram.`
       : `  ensaio: ${broken} de ${report.steps.length} passos falharam — dá para pedir correção abaixo.`,
   );
+}
+
+/** The dev command the scan itself proves, for a project it understood. */
+function devFromScan(scan: ProjectScan): DevOverride {
+  return {
+    bin: scan.packageManager,
+    args: ["run", scan.script ?? "dev"],
+    cwd: ".",
+    url: `http://localhost:${scan.port}`,
+    readyTimeoutMs: 90_000,
+  };
+}
+
+/**
+ * Resolve the project's configuration: cache, then agent, then nothing.
+ *
+ * Returns null when demovid should just use the scan — which is the right answer
+ * whenever the agent is unavailable and the scan was confident enough to stand
+ * on its own. The failure is only fatal the other way round: a project whose
+ * framework was not recognised has no working default to fall back to, and that
+ * is the case the operator asked to fail loudly.
+ */
+async function configureProject(
+  scan: ProjectScan,
+  opts: { noDiscover: boolean; log: (l: string) => void },
+): Promise<ProjectConfig | null> {
+  const { log } = opts;
+  const fp = await fingerprint(scan.dir, scan.workspaces);
+
+  const { config, stale } = await readConfig(scan.dir, fp);
+  if (config) {
+    log(`configuração de ${CONFIG_FILE} (edite à mão se algo estiver errado)`);
+    return config;
+  }
+  if (stale) log(`${CONFIG_FILE} descreve outras dependências — vou descobrir de novo`);
+
+  if (opts.noDiscover) {
+    if (!scan.confident) {
+      throw new Error(
+        `não reconheci este projeto e \`--no-discover\` proíbe perguntar ao agente. ` +
+          `Passe \`--url <url do app>\`.`,
+      );
+    }
+    return null;
+  }
+
+  let discovered: DiscoveredConfig;
+  try {
+    discovered = await discoverProject({ scan, log });
+  } catch (err: unknown) {
+    // Fatal only when nothing else can answer. With a confident scan the run
+    // continues without suggestions rather than refusing to record at all.
+    if (!scan.confident || !(err instanceof DiscoveryError)) throw err;
+    log(`aviso: ${err.message}`);
+    log("sigo com o que descobri sozinho — sem sugestões de demo e sem checagem de login");
+    return null;
+  }
+
+  // A measured port and a proven script outrank the agent's reading of them.
+  // The agent is authoritative only where nothing measured it.
+  const effective: DiscoveredConfig = scan.confident
+    ? { ...discovered, framework: scan.framework, dev: devFromScan(scan) }
+    : discovered;
+
+  const written = await writeConfig(scan.dir, effective, fp);
+  log(`configuração salva em ${CONFIG_FILE} — a próxima execução não precisa perguntar de novo`);
+  for (const n of effective.notes) log(`  ${n}`);
+  return written;
 }
 
 export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
@@ -96,36 +179,95 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
   log(`projeto: ${scan.name} · ${scan.framework} · ${scan.packageManager}`);
   for (const n of scan.notes) log(`  ${n}`);
 
+  // `--url` says the app is already up, so there is nothing to configure and
+  // nothing to start. Skipping discovery here is what keeps the escape hatch
+  // that every error message in this path points at.
+  const config = opts.url
+    ? null
+    : await configureProject(scan, { noDiscover: opts.noDiscover ?? false, log });
+
+  if (config?.auth.required) {
+    log(`este app exige login${config.auth.how ? `: ${config.auth.how}` : ""}`);
+    if (config.auth.username) {
+      log(`  credencial de dev encontrada: ${config.auth.username} / ${config.auth.password ?? "?"}`);
+    }
+  }
+
   const server = opts.url
     ? { url: opts.url, started: false, stop: async (): Promise<void> => {} }
-    : await ensureDevServer({ scan, log });
+    : await ensureDevServer({ scan, log, ...(config ? { override: config.dev } : {}) });
+
+  // Ctrl+C must not orphan the dev server. `finally` does not run on a signal,
+  // and the orphan then holds the port — so the next run adopts a server nobody
+  // owns, which is how a stale build ends up in someone's video. Measured: a
+  // SIGTERM'd run left `npm run dev` alive holding 5271/5273.
+  const onSignal = (sig: NodeJS.Signals): void => {
+    log(`recebi ${sig} — encerrando`);
+    void (async (): Promise<void> => {
+      closePrompt();
+      if (server.started) await server.stop();
+      process.exit(130);
+    })();
+  };
+  if (server.started) {
+    process.once("SIGINT", onSignal);
+    process.once("SIGTERM", onSignal);
+  }
 
   let exitCode = 0;
 
   try {
     // ── varredura ─────────────────────────────────────────────────────────
     log("varrendo o app para descobrir o que dá para apontar");
+    // A start route the agent identified — a dashboard behind `/`, say — beats
+    // the server's root, which for some apps is a redirect stub with nothing on it.
+    const startUrl =
+      config && config.startRoute && config.startRoute !== "/"
+        ? new URL(config.startRoute, server.url).href
+        : server.url;
     const probe = await launchBrowser({ probe: true, width: 1440, height: 900 });
     let inventory;
     try {
-      inventory = await crawlApp({ page: probe.page, startUrl: server.url, scan, log });
+      inventory = await crawlApp({ page: probe.page, startUrl, scan, log });
     } finally {
       await probe.close();
     }
 
     if (inventory.items.length === 0) {
-      log("não achei nenhum elemento endereçável — o app pode exigir login.");
+      // The generic version of this message ("o app pode exigir login") sent
+      // people looking for a login that was often not the problem. When the
+      // agent actually checked, say what it found instead of speculating.
+      if (config?.auth.required) {
+        log("não achei nenhum elemento endereçável, e este app exige login.");
+        if (config.auth.how) log(`  ${config.auth.how}`);
+        log("  demovid ainda não faz login sozinho — suba o app já autenticado e use --url.");
+      } else {
+        log("não achei nenhum elemento endereçável — o app pode exigir login.");
+      }
       return 1;
     }
     log(`${inventory.items.length} elementos em ${inventory.routes.length} rota(s)`);
 
     // ── o pedido ──────────────────────────────────────────────────────────
+    // The agent's suggestion is offered, never imposed: Enter takes it, anything
+    // typed replaces it. It exists because the hardest part of this prompt is
+    // starting from a blank line in someone else's codebase — not because a model
+    // knows better than the operator what their demo is about.
+    const suggestion = config?.suggestions[0];
     const request =
       opts.about ??
-      (await askRequired(
-        "O que você quer demonstrar? Descreva em português, como explicaria para alguém.",
-        "descreva a demo em uma ou duas frases.",
-      ));
+      (suggestion && isInteractive()
+        ? (await ask(
+            `O que você quer demonstrar? Descreva em português, como explicaria para alguém.\n` +
+              `Sugestão do pi (Enter aceita, ou escreva a sua):\n  ${suggestion}` +
+              (config && config.suggestions.length > 1
+                ? `\nOutras ideias: ${config.suggestions.slice(1).join(" · ")}`
+                : ""),
+          )) || suggestion
+        : await askRequired(
+            "O que você quer demonstrar? Descreva em português, como explicaria para alguém.",
+            "descreva a demo em uma ou duas frases.",
+          ));
 
     // ── formato ───────────────────────────────────────────────────────────
     // O modo de saída é o que define o produto, e o produto define o texto: sem
@@ -248,6 +390,8 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
     }
     exitCode = failed.length > 0 ? 1 : 0;
   } finally {
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
     closePrompt();
     if (server.started) await server.stop();
     // Undo any source annotation, whatever happened above.

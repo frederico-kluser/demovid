@@ -80,7 +80,11 @@ OPTIONS
                               padrão: detecta Brave)
   -y, --yes                   Pula o portão de aprovação e grava direto
       --about "<texto>"       O que demonstrar, em vez de perguntar (uso não-interativo)
-      --url <url>             Usa esta URL em vez de subir o servidor de dev
+      --url <url>             Usa esta URL em vez de subir o servidor de dev.
+                              Também pula a configuração — nada é descoberto nem gravado.
+      --no-discover           Não chamar o \`pi\`. Usa só o que dá para ler de
+                              package.json e dos arquivos de config. Falha se isso
+                              não bastar para subir o app.
   -n, --dry-run               Em \`record\`/\`rehearse\`: resolve saída, preset, voz,
                               captura e gravador, imprime e sai. Não abre browser
                               nem gasta chamada de API.
@@ -128,6 +132,7 @@ type CliValues = {
   wpm?: string | undefined;
   "voice-engine"?: string | undefined;
   "no-open"?: boolean | undefined;
+  "no-discover"?: boolean | undefined;
 };
 
 /** Build the guided flow's options out of the parsed flags. */
@@ -144,6 +149,7 @@ async function runScriptFlow(dir: string, values: CliValues): Promise<number> {
     url: values.url,
     voice: parseVoiceFlag(values.voice),
     wpm: parseWpmFlag(values.wpm),
+    noDiscover: values["no-discover"] ?? false,
     recording: {
       output: values.out ?? "",
       chrome,
@@ -465,6 +471,7 @@ async function main(): Promise<void> {
       url: { type: "string" },
       "dry-run": { type: "boolean", short: "n", default: false },
       "no-open": { type: "boolean", default: false },
+      "no-discover": { type: "boolean", default: false },
       deep: { type: "boolean", default: false },
       verbose: { type: "boolean", short: "v", default: false },
       help: { type: "boolean", short: "h", default: false },

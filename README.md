@@ -13,11 +13,40 @@ cd ~/my-app
 npx demovid                # scan → ask what to demo → gpt-5.4 writes it → rehearse → record
 ```
 
-It reads your `package.json`, starts (or adopts) your dev server, crawls the app
-for elements it can actually address, asks in Portuguese what you want to show,
-has `gpt-5.4` write the storyboard, rehearses it so broken selectors surface
+It works out how to run your project, starts (or adopts) your dev server, crawls
+the app for elements it can actually address, asks in Portuguese what you want to
+show, has `gpt-5.4` write the storyboard, rehearses it so broken selectors surface
 before anything is recorded, and only then records. You get `demo.mp4` and
 `demo.timeline.json`.
+
+### Working out how to run your project
+
+Most projects are answered for free, by reading files: the manifests of every
+workspace member (your frontend is often not in the root `package.json`), the
+`server.port` in `vite.config.ts` and friends, and the URL your dev server prints
+on startup — whichever of those is actual evidence rather than a guess.
+
+When that is not enough, demovid hands the repository to the
+[`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent
+(`deepseek-v4-pro`, thinking `xhigh`), which reads the README, follows the dev
+script, and answers three things nothing else can: **how to start the app and at
+which URL**, **whether it needs a login and which dev credentials the repo
+documents**, and **what is actually worth demonstrating** — offered as a
+ready-made answer you accept with Enter or type over.
+
+The answer is written to `.demovid.json` in your project, so it is paid for once,
+and it is plain JSON you can correct by hand. It is re-derived when your manifests
+change, not on a timer.
+
+```bash
+npx demovid --no-discover     # never call the agent; fail if the files do not suffice
+npx demovid --url http://localhost:5273   # skip configuration entirely
+```
+
+> The agent runs with **all** of its tools, including write, so it can edit the
+> repository it is inspecting. demovid diffs the git working tree around the call
+> and names anything it touched — it cannot undo those edits for you. Use
+> `--no-discover` or `--url` if that is not a trade you want.
 
 The hand-written path still works, and the guided flow just writes the same file:
 
@@ -82,6 +111,10 @@ and `readme`, locale `pt-BR`. Output as MP4, GIF or animated WebP. Resolutions f
   untested.
 - **Node ≥ 20**, a **Chromium-family browser** (Brave, Chrome, Chromium — Firefox will not work, no
   CDP), **ffmpeg**, **xdotool**, and an **`OPENAI_API_KEY`**.
+- **The [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent and a
+  `DEEPSEEK_API_KEY`** — needed only when demovid cannot work out how to run your project from its
+  files, which is the case for anything with a non-standard dev server. A project it recognises never
+  calls it, and `--no-discover` or `--url` opt out entirely.
 - **A screen recorder — optional.** demovid prefers
   [`gpu-screen-recorder`](https://git.dec05eba.com/gpu-screen-recorder/about/) and drives it
   directly; there is no wrapper script to install. Without it, it falls back to ffmpeg (`x11grab` +
@@ -137,6 +170,18 @@ they "generate boxes as if they were siblings of the root element… Ancestor el
 
 Most of these contradict what the surrounding literature says. Every one is reproducible from the
 tests in `test/`.
+
+**A port is free on IPv4 and taken on IPv6 at the same time.** Vite 7 bound `[::1]:5273` and nothing
+on `127.0.0.1`, so a connect probe against IPv4 alone reported the port free while the app was
+serving 200 — and demovid started a second dev server against a port that was already in use. Plenty
+of servers bind IPv4 only, so neither family can be the one you ask: probe both and OR the result.
+
+**"Believe the URL the server prints" is not implementable as a fallback.** The announcement has to
+*race* the guessed port, not be consulted after waiting on it — if you wait first, the timeout
+expires before you ever read the announcement, which is precisely the case it was written for. But it
+cannot simply win, either: a `dev` script that starts an API and a frontend announces whichever
+printed first, and an orphaned process from an earlier run answers on it instantly. A port read from
+`vite.config.ts` therefore gets a head start; only after it expires does an announcement count.
 
 **Transforming `document.body` does not work.** It is what the existing open-source tools in this
 space do, and it is broken: under a transformed `body`, `position: fixed` behaves like `absolute`. A
