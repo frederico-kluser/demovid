@@ -29,6 +29,7 @@
 import { writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { stringify as toYaml } from "yaml";
+import { run } from "./exec.js";
 import { launchBrowser } from "./browser.js";
 import { defaultWindowOrigin } from "./x11.js";
 import { allowedSelectors, crawlApp, serializeInventory } from "./project/inventory.js";
@@ -61,6 +62,8 @@ export interface ScriptFlowOptions {
   wpm?: number | undefined;
   /** `--no-discover`: never call the agent, even when the scan is unsure. */
   noDiscover?: boolean | undefined;
+  /** Skip the prepare step even when config has commands. */
+  skipPrepare?: boolean | undefined;
   /** Everything `record()` takes: resolution, chrome mode, output path. */
   recording: Omit<RecordOptions, "storyboard" | "rehearse" | "onLog">;
 }
@@ -191,6 +194,16 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
     log(`este app exige login${config.auth.how ? `: ${config.auth.how}` : ""}`);
     if (config.auth.username) {
       log(`  credencial de dev encontrada: ${config.auth.username} / ${config.auth.password ?? "?"}`);
+    }
+  }
+
+  // ── preparação ─────────────────────────────────────────────────────────
+  if (!opts.skipPrepare && config?.prepare?.commands.length) {
+    log("preparando dados de demonstração");
+    for (const cmd of config.prepare.commands) {
+      const cwd = resolve(dir, cmd.cwd);
+      log(`  $ ${cmd.bin} ${cmd.args.join(" ")}`);
+      await run(cmd.bin, cmd.args, { cwd });
     }
   }
 

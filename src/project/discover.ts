@@ -231,6 +231,7 @@ Answer with ONE JSON object and nothing else:
   },
   "startRoute": "/",
   "auth": { "required": false, "how": null, "username": null, "password": null },
+  "prepare": { "commands": [{ "bin": "bash", "args": ["setup-demo.sh"], "cwd": "." }] }, // optional — omit entirely when not needed
   "suggestions": ["..."],
   "notes": ["..."]
 }
@@ -246,6 +247,14 @@ Rules that decide whether this works:
 - **\`auth\`**: if the app gates on a login, say so and find real dev credentials in the README,
   \`.env.example\`, or a seed script. Never invent credentials — use null when you did not find them.
   Without this, demovid crawls a login screen and reports that the app has no elements.
+- **\`prepare\`**: if this app DISPLAYS data that does not exist yet — a git repository browser
+  that needs a repo to open, a dashboard that needs seeded data, a code editor that needs
+  example files, a database client that needs tables — provide shell commands to CREATE that
+  data. Each command is \`{ "bin": "...", "args": [...], "cwd": "..." }\` with cwd relative to
+  the project root. The commands run BEFORE the dev server starts, in order. They should be
+  idempotent or check for existing data — a second run must not break the first run's results.
+  If the app works out of the box with no preparation, OMIT this field entirely (do NOT send
+  \`"prepare": null\` or \`"prepare": {"commands": []}\`).
 - **\`suggestions\`**: one to three things a viewer would find genuinely impressive, most compelling
   first, each phrased as an instruction to whoever writes the script ("mostre o grafo de commits e
   arraste um commit para outro branch para fazer o rebase"). This is offered to the operator as a

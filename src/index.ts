@@ -85,6 +85,8 @@ OPTIONS
       --no-discover           Não chamar o \`pi\`. Usa só o que dá para ler de
                               package.json e dos arquivos de config. Falha se isso
                               não bastar para subir o app.
+      --no-prepare            Pula a preparação de dados de demonstração (comandos
+                              definidos em .demovid.json).
   -n, --dry-run               Em \`record\`/\`rehearse\`: resolve saída, preset, voz,
                               captura e gravador, imprime e sai. Não abre browser
                               nem gasta chamada de API.
@@ -133,6 +135,7 @@ type CliValues = {
   "voice-engine"?: string | undefined;
   "no-open"?: boolean | undefined;
   "no-discover"?: boolean | undefined;
+  "no-prepare"?: boolean | undefined;
 };
 
 /** Build the guided flow's options out of the parsed flags. */
@@ -150,6 +153,7 @@ async function runScriptFlow(dir: string, values: CliValues): Promise<number> {
     voice: parseVoiceFlag(values.voice),
     wpm: parseWpmFlag(values.wpm),
     noDiscover: values["no-discover"] ?? false,
+    skipPrepare: values["no-prepare"] ?? false,
     recording: {
       output: values.out ?? "",
       chrome,
@@ -472,6 +476,7 @@ async function main(): Promise<void> {
       "dry-run": { type: "boolean", short: "n", default: false },
       "no-open": { type: "boolean", default: false },
       "no-discover": { type: "boolean", default: false },
+      "no-prepare": { type: "boolean", default: false },
       deep: { type: "boolean", default: false },
       verbose: { type: "boolean", short: "v", default: false },
       help: { type: "boolean", short: "h", default: false },
