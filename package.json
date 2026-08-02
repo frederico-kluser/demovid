@@ -1,6 +1,6 @@
 {
   "name": "demovid",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Rode dentro do seu projeto frontend, descreva a demo em português, e receba um MP4 narrado + uma timeline com os tempos de cada fala e os melhores pontos de corte. O roteiro é escrito por IA a partir dos elementos reais do app.",
   "type": "module",
   "bin": {
