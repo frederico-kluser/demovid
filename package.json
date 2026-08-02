@@ -18,6 +18,7 @@
   "files": [
     "dist",
     "templates",
+    "scripts/postinstall.mjs",
     "README.md",
     "LICENSE",
     "NOTICE"
@@ -27,6 +28,7 @@
   },
   "scripts": {
     "prepare": "npm run bake:springs && npm run build",
+    "postinstall": "node scripts/postinstall.mjs",
     "prepublishOnly": "npm run typecheck && npm test",
     "build": "npm run build:overlay && tsc -p tsconfig.build.json",
     "build:overlay": "node --import tsx scripts/build-overlay.ts",

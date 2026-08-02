@@ -8,6 +8,7 @@
  */
 import { access, constants } from "node:fs/promises";
 import { run, which } from "./exec.js";
+import { findPlannotator, PLANNOTATOR_INSTALL_HINT } from "./plannotator.js";
 import { TTS_MODEL } from "./openai/tts.js";
 import { findRunningCaptures, resolveBackend } from "./rec.js";
 
@@ -127,6 +128,18 @@ export async function doctor(opts: DoctorOptions = {}): Promise<boolean> {
     "xdotool",
     xdotool ? "ok" : "fail",
     xdotool ?? "ausente — é como descobrimos o id da janela do browser para capturar só ela",
+  );
+
+  // `warn`, never `fail`: without it the approval gate is the terminal one that
+  // has always worked, so a missing Plannotator costs a nicer review and nothing
+  // else. Reported at all because "por que o plano não abriu no navegador?" is
+  // otherwise a silent question.
+  const plannotator = await findPlannotator();
+  push(
+    "plannotator",
+    plannotator ? "ok" : "warn",
+    plannotator ??
+      `ausente — o plano é aprovado no terminal. Para revisar no navegador: ${PLANNOTATOR_INSTALL_HINT}`,
   );
 
   // ── ffmpeg ─────────────────────────────────────────────────────────────────

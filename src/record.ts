@@ -33,7 +33,14 @@ import type { CapturePlan } from "./resolution.js";
 import { splitSentences } from "./openai/tts.js";
 import { balloonTextOf, DEFAULT_STEP_TIMEOUT_MS, type Step, type Storyboard } from "./storyboard.js";
 import { buildTimeline, timelinePathFor, TimelineRecorder, writeTimeline } from "./timeline.js";
-import { clampIntoBox, defaultWindowOrigin, moveWindow, parkPointer, windowGeometry } from "./x11.js";
+import {
+  clampIntoBox,
+  fitWindowOnScreen,
+  moveWindow,
+  parkPointer,
+  usableBoxFor,
+  windowGeometry,
+} from "./x11.js";
 
 /** Clips are served to the page from disk over an intercepted virtual origin. */
 const CLIP_ORIGIN = "https://demovid.invalid";
@@ -203,8 +210,14 @@ export const LOADING_SELECTORS = [
   '[class*="loader" i]',
 ];
 
-/** Ceiling for the automatic settle when the step does not set `timeoutMs`. */
-const SETTLE_DEFAULT_MS = 8_000;
+/**
+ * Ceiling for the automatic settle when the step does not set `timeoutMs`.
+ *
+ * Exported so the plan shown for approval can state the real number instead of
+ * a second copy of it — an operator approving "espera até 8s" is approving this
+ * constant, and two constants that mean the same thing drift.
+ */
+export const SETTLE_DEFAULT_MS = 8_000;
 
 /**
  * Actions that can leave the app busy, and therefore get an automatic settle.
@@ -216,7 +229,7 @@ const SETTLE_DEFAULT_MS = 8_000;
  * screenshot of a half-populated list is the artifact this whole mechanism is
  * about.
  */
-const SETTLING_ACTIONS: ReadonlySet<string> = new Set(["click", "type", "goto", "scroll"]);
+export const SETTLING_ACTIONS: ReadonlySet<string> = new Set(["click", "type", "goto", "scroll"]);
 
 /**
  * Wait for the app to stop being busy after an action.
@@ -405,15 +418,17 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
     log(`aviso: ${w}`);
   }
 
-  // When no capture plan provides position, default to the primary monitor's
-  // origin so the window is always visible — (0,0) is wrong on multi-monitor.
-  const origin = plan ? null : await defaultWindowOrigin();
+  // Without a capture plan nothing has fitted the request to a monitor, so do it
+  // here. Position alone is not enough: the primary monitor's origin ignores the
+  // panel and the title bar, and a size nobody compared to the screen is the
+  // other half of the same bug.
+  const fallback = plan ? null : await fitWindowOnScreen(opts.width ?? 1600, opts.height ?? 1000);
 
   const browser = await launchBrowser({
-    width: plan?.window.w ?? opts.width ?? 1600,
-    height: plan?.window.h ?? opts.height ?? 1000,
-    x: plan?.window.x ?? opts.x ?? origin?.x ?? 0,
-    y: plan?.window.y ?? opts.y ?? origin?.y ?? 0,
+    width: plan?.window.w ?? fallback?.w ?? opts.width ?? 1600,
+    height: plan?.window.h ?? fallback?.h ?? opts.height ?? 1000,
+    x: plan?.window.x ?? opts.x ?? fallback?.x ?? 0,
+    y: plan?.window.y ?? opts.y ?? fallback?.y ?? 0,
     ...(plan ? { deviceScaleFactor: plan.deviceScaleFactor } : {}),
   });
   await serveClips(browser, clips);
@@ -493,26 +508,60 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
   // its bottom-right off the work area, and nothing here ever looked. Observed on
   // a real take: the recorded window hung off the operator's screen.
   //
-  // Checked against `plan.usable`, which is the box `planCapture` already fitted
-  // the request to, and corrected with `xdotool windowmove` — the only mechanism
-  // that can move a mapped window, and one this codebase did not have.
+  // Checked against the usable box — `planCapture`'s when there is a plan, the
+  // fitted fallback's otherwise — and corrected with `xdotool windowmove`, the
+  // only mechanism that can move a mapped window.
+  //
+  // Two corrections, in this order, because they fix different halves and moving
+  // a window that is too big cannot succeed:
+  //
+  //  1. SHRINK when the window is larger than the box. Moving alone was the
+  //     first version of this and it could only pick which edge to sacrifice —
+  //     it emitted a warning and recorded a window hanging off the screen.
+  //     Giving up pixels is safe here: `finalizeCapture` re-derives the scale
+  //     from the geometry that actually resulted, so the file still lands on the
+  //     requested resolution, just softer. A silently cropped take does not.
+  //  2. MOVE what is now the right size back inside.
+  //
+  // The 2px tolerance is not cosmetic: Chromium rounds window bounds and the
+  // reels plan lands exactly 1px over, so a strict comparison would resize on
+  // every run and fight the compositor for nothing.
   //
   // Silent when it is already inside, which is the common case: a log line every
   // run would train the operator to ignore the one run where it mattered.
-  if (plan) {
-    const before = await windowGeometry(browser.windowId);
+  // Re-measured against the window we actually opened. The planned box was built
+  // from the decoration of whatever window was focused at the time, which is a
+  // guess that is off by a whole title bar whenever it guesses wrong.
+  const measured = await usableBoxFor(browser.windowId, plan?.monitor);
+  const usable = measured ?? plan?.usable ?? fallback?.usable ?? null;
+  if (usable) {
+    let before = await windowGeometry(browser.windowId);
+
+    if (before && (before.w > usable.w + 2 || before.h > usable.h + 2)) {
+      const wantW = Math.min(before.w, usable.w);
+      const wantH = Math.max(2, Math.min(before.h, usable.h) - chromePx);
+      await setContentSize(browser.page, wantW, wantH, dsfPlan).catch(() => {});
+      await sleep(280);
+      log(
+        `a janela (${before.w}x${before.h}) não cabia na área útil ` +
+          `(${usable.w}x${usable.h}) — reduzida para caber inteira na tela`,
+      );
+      before = await windowGeometry(browser.windowId);
+    }
+
     if (before) {
-      const { x, y } = clampIntoBox(before, plan.usable);
+      const { x, y } = clampIntoBox(before, usable);
       if (x !== before.x || y !== before.y) {
         await moveWindow(browser.windowId, x, y);
         log(`a janela estava fora da área útil — movida de (${before.x},${before.y}) para (${x},${y})`);
-        if (before.w > plan.usable.w || before.h > plan.usable.h) {
-          const w =
-            `a janela (${before.w}x${before.h}) é maior que a área útil ` +
-            `(${plan.usable.w}x${plan.usable.h}) — parte dela fica fora da tela`;
-          warnings.push(w);
-          log(`aviso: ${w}`);
-        }
+      }
+      const after = (await windowGeometry(browser.windowId)) ?? before;
+      if (after.w > usable.w + 2 || after.h > usable.h + 2) {
+        const w =
+          `a janela (${after.w}x${after.h}) continua maior que a área útil ` +
+          `(${usable.w}x${usable.h}) — parte dela fica fora da tela`;
+        warnings.push(w);
+        log(`aviso: ${w}`);
       }
     }
   }

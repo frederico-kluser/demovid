@@ -20,6 +20,8 @@ import {
   RESOLUTIONS,
 } from "../src/resolution.js";
 import {
+  clampIntoBox,
+  fitIntoBox,
   intersect,
   parseFrameExtents,
   parseMonitors,
@@ -204,4 +206,51 @@ test("with no X11 information the request is honoured rather than invented", () 
   assert.deepEqual({ w: plan.window.w, h: plan.window.h }, { w: 1920, h: 1080 });
   assert.equal(plan.scaleNeeded, false);
   assert.ok(plan.warnings.length > 0, "não verificar se cabe precisa ser dito");
+});
+
+// ── fitIntoBox ──────────────────────────────────────────────────────────────
+//
+// The half `clampIntoBox` cannot do. Sliding a window that is already the right
+// size is one problem; deciding how big it may be at all is a different one, and
+// every window demovid opens that is NOT the video used to skip it entirely.
+
+test("fitIntoBox places a window that fits at the usable box's origin, unshrunk", () => {
+  const box = usableContentBox(monitors[0]!, area, frame);
+  assert.deepEqual(box, { x: 1920, y: 69, w: 2560, h: 1531 });
+
+  // The crawl's window. Fits comfortably — the point is WHERE it lands: at the
+  // usable origin (1920,69), not the monitor's raw origin (1920,0), which is
+  // under the 32px panel and the 37px title bar.
+  const win = fitIntoBox(1440, 900, box);
+  assert.deepEqual(win, { x: 1920, y: 69, w: 1440, h: 900 });
+});
+
+test("fitIntoBox shrinks uniformly when the request is bigger than the screen", () => {
+  // A 1366x768 laptop with the same panel and title bar. 1440x900 does not fit,
+  // and nothing downstream was ever going to notice.
+  const small = usableContentBox(
+    { name: "eDP-1", primary: true, x: 0, y: 0, w: 1366, h: 768 },
+    { x: 0, y: 32, w: 1366, h: 736 },
+    frame,
+  );
+  assert.deepEqual(small, { x: 0, y: 69, w: 1366, h: 699 });
+
+  const win = fitIntoBox(1440, 900, small);
+  assert.ok(win.w <= small.w && win.h <= small.h, "tem que caber");
+  // Uniform: the aspect ratio survives, so nothing recorded gets reshaped.
+  assert.ok(Math.abs(win.w / win.h - 1440 / 900) < 0.01);
+  assert.deepEqual({ x: win.x, y: win.y }, { x: 0, y: 69 });
+});
+
+test("fitIntoBox never returns a zero-sized window", () => {
+  const win = fitIntoBox(1440, 900, { x: 0, y: 0, w: 0, h: 0 });
+  assert.ok(win.w >= 2 && win.h >= 2);
+});
+
+test("clampIntoBox sacrifices the bottom-right, never the origin", () => {
+  const box = usableContentBox(monitors[0]!, area, frame);
+  // Grown past the bottom of the work area by the chrome-fitting loop.
+  const grown = { x: 1920, y: 69, w: 2560, h: 1700 };
+  const { x, y } = clampIntoBox(grown, box);
+  assert.deepEqual({ x, y }, { x: 1920, y: 69 }, "o canto superior-esquerdo é o que se preserva");
 });

@@ -99,10 +99,27 @@ never known anything about the browser's UI.
 Giving up pixels here is safe: `finalizeCapture` re-derives whether a scale is needed from the
 geometry that actually resulted, so the file still lands on the requested resolution.
 
-Nothing validates the window's POSITION against the monitor after launch — the convergence loop in
-`src/record.ts` checks height only. `defaultWindowOrigin()` picks the primary monitor's origin for
-the callers that have no plan, which is why `(0,0)` is wrong on a multi-monitor desktop whose primary
-is not the leftmost output.
+### Every window is FITTED and PLACED, and the box is re-measured after launch
+
+`planCapture` does this for the take. Everything else — the crawl's probe, `record()` with no plan —
+used to get the primary monitor's raw origin and a hardcoded size, which is two separate bugs that
+look like one: the origin ignores `_NET_WORKAREA` and `_NET_FRAME_EXTENTS`, and a size nobody
+compared to the monitor is the other half. `fitWindowOnScreen` in `src/x11.ts` is now the only way to
+open a window that is not the video; `defaultWindowOrigin()` was that bug and no longer exists.
+
+Then, after launch, three things that are only knowable once the window is mapped:
+
+- **`frameExtents()` with no argument samples whatever window happened to be focused**, because
+  before launch there is nothing else to sample. Measured on one machine minutes apart: `0,0,37,0`
+  with a terminal focused, `0,0,0,0` right after. That moves the usable box by a whole title bar.
+  `usableBoxFor(windowId)` re-derives it from OUR window instead — same shape as `chromeHeightPx`,
+  and for the same reason.
+- **The clamp SHRINKS before it moves.** Sliding a window that is larger than the box can only
+  choose which edge to sacrifice; the first version emitted a warning and recorded a window hanging
+  off the screen. Giving up pixels is safe here because `finalizeCapture` re-derives the scale from
+  the geometry that actually resulted — a softer file beats a cropped one.
+- **The comparison carries a 2px tolerance.** Chromium rounds window bounds and the reels plan lands
+  exactly 1px over; a strict comparison resizes on every run and fights the compositor for nothing.
 
 ### `importSessionEnv()` runs once, in the CLI, before anything reads `DISPLAY`
 

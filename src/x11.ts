@@ -241,16 +241,84 @@ export function pickMonitor(monitors: Monitor[], name?: string): Monitor | null 
 }
 
 /**
- * Safe default window position: the primary monitor's origin, or (0,0) when X11
- * is unavailable.
+ * Shrink `w x h` until it fits inside `box`, then place it at the box's origin.
  *
- * Every caller that opens a browser window should pass this when no explicit
- * position is known, so a multi-monitor setup with a non-zero primary does not
- * place the window off-screen.
+ * Not the same job as `clampIntoBox`, which slides a window that is already the
+ * right size. This one answers the question that comes first: how big may the
+ * window be at all. Measured on the reference machine — the primary monitor is
+ * 2560x1600 but the usable content box is 2560x1531, because a 32px panel and a
+ * 37px title bar come out of it — so a window asked for at the *monitor's*
+ * origin opens with its title bar underneath the panel.
+ *
+ * Uniform, so a window that is asked for at an aspect ratio keeps it: shrinking
+ * only the offending axis would silently change the shape of the thing being
+ * recorded.
+ *
+ * Not forced to an even size. The recorder's own backends already reject odd
+ * dimensions and crop for it (`src/recorder/backend-ffmpeg.ts`), and the callers
+ * that need evenness are working from `planCapture`, not from here.
  */
-export async function defaultWindowOrigin(): Promise<{ x: number; y: number }> {
+export function fitIntoBox(w: number, h: number, box: Rect): Rect {
+  const fit = Math.min(1, box.w / w, box.h / h);
+  return {
+    w: Math.max(2, Math.floor(w * fit)),
+    h: Math.max(2, Math.floor(h * fit)),
+    x: box.x,
+    y: box.y,
+  };
+}
+
+/**
+ * Where to open a browser window that is NOT the video: the crawl's probe, and
+ * `record()`'s fallback when no capture plan was built.
+ *
+ * `planCapture` does this properly for the take, against the resolution the
+ * operator asked for. Everything else used to get the primary monitor's raw
+ * origin and a hardcoded size, which is two separate ways to end up off-screen:
+ * the origin ignores `_NET_WORKAREA` and `_NET_FRAME_EXTENTS`, and the size was
+ * never compared to the monitor at all — 1440x900 does not fit a 1366x768 laptop
+ * and nothing downstream was looking.
+ *
+ * Best-effort by construction. A machine with no X11 information keeps the
+ * requested size at (0,0), which is the situation demovid was already in.
+ */
+/**
+ * The usable content box, measured against a window that ALREADY EXISTS.
+ *
+ * `frameExtents()` with no argument samples whatever window happened to be
+ * focused, because before launch there is nothing else to sample. Measured: that
+ * answer is not stable — the same machine reported `0,0,37,0` with a terminal
+ * focused and `0,0,0,0` moments later, which moves the box by the height of a
+ * title bar and is exactly the size of error that leaves a window's top edge
+ * off-screen.
+ *
+ * Once our window is mapped the guess is unnecessary: ask it. Same shape as
+ * `chromeHeightPx` — a number that is only knowable after launch is measured
+ * after launch, never reserved in advance from a constant.
+ *
+ * Returns null when X11 says nothing useful, so the caller keeps the planned box
+ * rather than a box built from missing data.
+ */
+export async function usableBoxFor(windowId: string, monitorName?: string): Promise<Rect | null> {
   const monitors = await listMonitors().catch(() => []);
-  const primary = monitors.find((m) => m.primary) ?? monitors[0];
-  if (primary) return { x: primary.x, y: primary.y };
-  return { x: 0, y: 0 };
+  const monitor = pickMonitor(monitors, monitorName) ?? pickMonitor(monitors);
+  if (!monitor) return null;
+  const [area, frame] = await Promise.all([workArea(), frameExtents(windowId)]);
+  return usableContentBox(monitor, area, frame);
+}
+
+export async function fitWindowOnScreen(
+  w: number,
+  h: number,
+  monitorName?: string,
+): Promise<Rect & { usable: Rect }> {
+  const monitors = await listMonitors().catch(() => []);
+  const monitor = pickMonitor(monitors, monitorName) ?? pickMonitor(monitors);
+  if (!monitor) {
+    const usable = { x: 0, y: 0, w, h };
+    return { x: 0, y: 0, w, h, usable };
+  }
+  const [area, frame] = await Promise.all([workArea(), frameExtents()]);
+  const usable = usableContentBox(monitor, area, frame);
+  return { ...fitIntoBox(w, h, usable), usable };
 }

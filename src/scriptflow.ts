@@ -31,7 +31,7 @@ import { basename, isAbsolute, relative, resolve } from "node:path";
 import { stringify as toYaml } from "yaml";
 import { run } from "./exec.js";
 import { launchBrowser } from "./browser.js";
-import { defaultWindowOrigin } from "./x11.js";
+import { fitWindowOnScreen } from "./x11.js";
 import { allowedSelectors, crawlApp, serializeInventory } from "./project/inventory.js";
 import { ensureDevServer, type DevOverride } from "./project/devserver.js";
 import { hasGitRepo, scanProject, type ProjectScan } from "./project/scan.js";
@@ -39,7 +39,9 @@ import { CONFIG_FILE, fingerprint, readConfig, serializeReadiness, writeConfig, 
 import { discoverProject, DiscoveryError } from "./project/discover.js";
 import { refineStoryboard, writeStoryboard } from "./openai/script.js";
 import { ask, askRequired, closePrompt, gate, isInteractive } from "./prompt.js";
-import { record, type RecordOptions, type RecordReport } from "./record.js";
+import { LOADING_SELECTORS, record, type RecordOptions } from "./record.js";
+import { buildPlanView, planMarkdown, printPlan } from "./plan-view.js";
+import { annotatePlan, findPlannotator, PLANNOTATOR_INSTALL_HINT } from "./plannotator.js";
 import { restore, readJournal } from "./annotate.js";
 import { extensionFor, MODE_CAPS, type OutputMode } from "./output-mode.js";
 import type { Storyboard } from "./storyboard.js";
@@ -66,28 +68,6 @@ export interface ScriptFlowOptions {
   skipPrepare?: boolean | undefined;
   /** Everything `record()` takes: resolution, chrome mode, output path. */
   recording: Omit<RecordOptions, "storyboard" | "rehearse" | "onLog">;
-}
-
-function printPlan(sb: Storyboard, report: RecordReport): void {
-  console.warn("");
-  console.warn(`  ${sb.title}`);
-  console.warn("");
-  for (const [i, step] of sb.steps.entries()) {
-    const r = report.steps.find((s) => s.index === i);
-    const mark = r ? (r.ok ? "✓" : "✗") : "·";
-    console.warn(
-      `  ${mark} ${String(i).padStart(2)}. ${step.action.padEnd(7)} ${(step.target ?? "").slice(0, 42).padEnd(42)}`,
-    );
-    if (step.say) console.warn(`        "${step.say.slice(0, 96)}"`);
-    if (r && !r.ok) console.warn(`        ↳ ${r.detail}`);
-  }
-  const broken = report.steps.filter((s) => !s.ok).length;
-  console.warn("");
-  console.warn(
-    broken === 0
-      ? `  ensaio: todos os ${report.steps.length} passos funcionaram.`
-      : `  ensaio: ${broken} de ${report.steps.length} passos falharam — dá para pedir correção abaixo.`,
-  );
 }
 
 /** The dev command the scan itself proves, for a project it understood. */
@@ -276,8 +256,11 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
       config && config.startRoute && config.startRoute !== "/"
         ? new URL(config.startRoute, server.url).href
         : server.url;
-    const origin = await defaultWindowOrigin();
-    const probe = await launchBrowser({ probe: true, width: 1440, height: 900, x: origin.x, y: origin.y });
+    // Fitted, not just positioned. 1440x900 is a request, and it does not fit a
+    // 1366x768 laptop — this window is not the video, so nothing downstream was
+    // ever going to notice that it hung off the screen.
+    const win = await fitWindowOnScreen(1440, 900);
+    const probe = await launchBrowser({ probe: true, width: win.w, height: win.h, x: win.x, y: win.y });
     let inventory;
     try {
       inventory = await crawlApp({ page: probe.page, startUrl, scan, log });
@@ -390,6 +373,16 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
     const storyboardPath = opts.storyboardPath ?? resolve(dir, "demo.yaml");
 
     // ── ensaiar → mostrar → aprovar ───────────────────────────────────────
+    //
+    // The plan goes to Plannotator when it is installed, and to the terminal
+    // otherwise. Resolved once, before the loop, so a revision round does not
+    // re-scan PATH and — more importantly — so the operator is told which UI to
+    // expect before the first rehearsal makes them wait for it.
+    const gateInBrowser = opts.yes || !isInteractive() ? null : await findPlannotator();
+    if (!gateInBrowser && !opts.yes && isInteractive()) {
+      log(`aprovação pelo terminal. Para revisar no navegador: ${PLANNOTATOR_INSTALL_HINT}`);
+    }
+
     for (;;) {
       await writeFile(storyboardPath, toYaml(storyboard), "utf8");
       log(`roteiro em ${storyboardPath}`);
@@ -402,13 +395,37 @@ export async function scriptFlow(opts: ScriptFlowOptions): Promise<number> {
         rehearse: true,
         onLog: log,
       });
-      printPlan(storyboard, rehearsal);
+
+      // Three loader sources, kept apart rather than pre-merged, because the plan
+      // says where each one came from: a wrong built-in is a demovid bug, a wrong
+      // `.demovid.json` entry is one line for the operator to fix.
+      const view = buildPlanView({
+        storyboard,
+        report: rehearsal,
+        builtin: LOADING_SELECTORS,
+        fromCrawl: inventory.loaders,
+        fromConfig: config?.readiness?.loadingSelectors ?? [],
+        settledSelectors: config?.readiness?.settledSelectors,
+        slowActions: config?.readiness?.slowActions,
+        capture: opts.recording.capture,
+      });
+
+      // Printed either way. The browser review is the one being answered, but a
+      // terminal that shows nothing leaves no record of what was approved.
+      printPlan(view);
 
       if (opts.yes || !isInteractive()) break;
 
-      const answer = await gate(
-        "Enter grava · `n` cancela · ou escreva o que mudar (ex: \"mais curto, comece pela busca\")",
-      );
+      // `??` is the whole fallback policy: a missing binary, a changed contract,
+      // a dismissed-without-deciding window and a crash all return null, and the
+      // terminal gate that has always worked answers instead.
+      const answer =
+        (gateInBrowser
+          ? await annotatePlan({ markdown: planMarkdown(view), name: "plano-da-demo", log })
+          : null) ??
+        (await gate(
+          "Enter grava · `n` cancela · ou escreva o que mudar (ex: \"mais curto, comece pela busca\")",
+        ));
       if (answer.kind === "approve") break;
       if (answer.kind === "abort") {
         log("cancelado. O roteiro ficou salvo — dá para editar à mão e rodar `demovid record`.");
