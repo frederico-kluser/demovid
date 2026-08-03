@@ -208,3 +208,51 @@ async function encodeOnce(
     });
   }
 }
+
+export interface SilentMp4Options {
+  /** The captured MP4. Not modified. */
+  input: string;
+  /** Where the re-encoded MP4 goes. */
+  output: string;
+  /** Long edge in px. Never upscales beyond the source width. */
+  width?: number;
+  onLog?: (line: string) => void;
+}
+
+/**
+ * Re-encode a captured MP4 for silent output.
+ *
+ * The contract is different from the animation encoder: there is no budget, no
+ * frame-rate ladder, and no size ceiling. The goal is a small-but-readable file,
+ * not a file that fits inside N megabytes. The research-backed defaults are
+ * CRF 30 (readable UI text, small file), preset veryslow (best compression per
+ * bit), tune stillimage (preserve sharp edges), and a sparse keyframe interval
+ * (low-motion screen content does not need frequent intra frames).
+ */
+export async function encodeSilentMp4(opts: SilentMp4Options): Promise<{ bytes: number; width: number }> {
+  const log = opts.onLog ?? ((): void => {});
+  const width = opts.width ?? DEFAULT_WIDTH;
+
+  const chain = `scale=w='min(${width},iw)':h=-2:flags=lanczos`;
+
+  log("reencodando para MP4 silencioso (CRF 30, tune stillimage, sem áudio)");
+
+  await run("ffmpeg", [
+    "-hide_banner", "-loglevel", "error",
+    "-i", opts.input,
+    "-vf", chain,
+    "-c:v", "libx264",
+    "-crf", "30",
+    "-preset", "veryslow",
+    "-tune", "stillimage",
+    "-g", "300",
+    "-pix_fmt", "yuv420p",
+    "-an",
+    "-y", opts.output,
+  ]);
+
+  const bytes = (await stat(opts.output)).size;
+  const mb = (bytes / 1024 / 1024).toFixed(2);
+  log(`mp4-silent: ${mb} MB, ${width}px wide`);
+  return { bytes, width };
+}

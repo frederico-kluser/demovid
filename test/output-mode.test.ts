@@ -58,9 +58,10 @@ test("todo modo com voz também captura áudio", () => {
   }
 });
 
-test("extensionFor: remotion entrega um MP4 mais um diretório", () => {
+test("extensionFor: remotion e mp4-silent entregam MP4", () => {
   assert.equal(extensionFor("mp4"), "mp4");
   assert.equal(extensionFor("gif"), "gif");
   assert.equal(extensionFor("webp"), "webp");
   assert.equal(extensionFor("remotion"), "mp4");
+  assert.equal(extensionFor("mp4-silent"), "mp4");
 });

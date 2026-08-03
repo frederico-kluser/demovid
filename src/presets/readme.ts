@@ -63,10 +63,10 @@ export const readme: Preset = {
   },
 
   balloon: {
-    maxWidthPx: 460,
-    fontSizePx: 21,
-    lineHeight: 1.45,
-    fontWeight: 500,
+    maxWidthPx: 520,
+    fontSizePx: 28,
+    lineHeight: 1.4,
+    fontWeight: 600,
     radiusPx: 12,
     paddingPx: [16, 20],
     bg: "rgba(12, 18, 32, 0.92)",

@@ -63,11 +63,11 @@ const EFFORT_LADDER = [CHAT_EFFORT, "high", null] as const;
 const REJECTS_PARAM = /reasoning|effort|unsupported|unrecognized|invalid.*(parameter|field|argument)/i;
 
 /**
- * Output ceilings, smallest first. Reasoning at `xhigh` regularly spends the
- * first rung without emitting an answer, and the cheapest rung that works is the
- * one to pay for — so this climbs rather than starting at the top.
+ * Output ceiling. Reasoning at `xhigh` regularly spends the budget without
+ * emitting an answer, so this starts at 64 k to avoid the retry ladder that
+ * used to climb 16 k → 32 k → 64 k.
  */
-const DEFAULT_BUDGETS = [16_000, 32_000, 64_000] as const;
+const DEFAULT_BUDGETS = [64_000] as const;
 
 export class ChatError extends Error {
   constructor(

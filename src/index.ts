@@ -47,11 +47,14 @@ OPTIONS
                               \`crop\` a removem — junto com qualquer aviso que o
                               browser resolva mostrar ali — ao custo de um passe
                               de ffmpeg. \`keep\` mantém o passe único puro.
-      --format <fmt>          mp4 | gif | webp | remotion    (padrão: mp4)
+      --format <fmt>          mp4 | gif | webp | mp4-silent | remotion  (padrão: mp4)
                               \`gif\`/\`webp\` entregam SÓ a imagem animada, sem voz:
                               nenhuma chamada de TTS, o balão é o único canal, e
                               o arquivo é reduzido tirando quadros até caber no
                               limite. Sem \`--preset\`, usa o preset \`readme\`.
+                              \`mp4-silent\` é o MP4 sem áudio e sem limite de tempo
+                              ou tamanho: a captura é reencodada com CRF alto para
+                              arquivo pequeno, e o balão é o único canal.
                               \`remotion\` entrega o MP4 mais um projeto Remotion
                               ao lado: o roteiro de edição em JSON, as cenas já
                               cortadas nos pontos de silêncio medidos, transições,
@@ -114,6 +117,7 @@ EXAMPLES
   demovid record demo.yaml --preset helpdesk
   demovid record demo.yaml --format gif
   demovid record demo.yaml --format webp --max-mb 2
+  demovid record demo.yaml --format mp4-silent
   demovid record demo.yaml --voice marin --wpm 165
   demovid record demo.yaml --dry-run
   demovid record demo.yaml --format remotion
@@ -240,7 +244,7 @@ function resolveOutputMode(format: string | undefined): OutputMode {
   const spec = format?.toLowerCase();
   if (!spec) return "mp4";
   if (!isOutputMode(spec)) {
-    throw new Error(`formato desconhecido: "${format}". Use mp4, gif, webp ou remotion.`);
+    throw new Error(`formato desconhecido: "${format}". Use mp4, gif, webp, mp4-silent ou remotion.`);
   }
   return spec;
 }
@@ -257,9 +261,6 @@ function buildAnimate(
   o: { maxMb?: string | undefined; fps?: string | undefined },
 ): AnimateOptions | undefined {
   if (mode !== "gif" && mode !== "webp") {
-    if (o.maxMb || o.fps) {
-      console.warn("[demovid] --max-mb e --fps só valem com --format gif|webp — ignorados");
-    }
     return undefined;
   }
 

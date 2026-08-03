@@ -56,25 +56,24 @@ const ok = (text: string) => ({
   },
 });
 
-test("an answer eaten by reasoning buys more room instead of surfacing as a failure", async () => {
-  // At `xhigh` the model routinely spends the whole ceiling thinking and returns
-  // `incomplete`. Surfaced raw, that reached the operator as "o modelo não
-  // produziu um roteiro válido" — blaming the model for running out of room.
+test("an incomplete response surfaces a clear error instead of blaming the model", async () => {
+  // When the model spends the whole budget thinking without emitting an answer,
+  // the message must tell the operator what to do (encurtar o pedido), not blame
+  // the model. With a single ceiling at 64 k there is no ladder to climb.
   process.env["OPENAI_API_KEY"] ??= "sk-test";
-  const { sent, result, error } = await withFetch(
+  const { sent, error } = await withFetch(
     [
       { status: 200, body: { status: "incomplete", incomplete_details: { reason: "max_output_tokens" } } },
-      ok('{"a":1}'),
     ],
     () => callStructured({ ...CALL }),
   );
-  assert.equal(error, null);
-  assert.deepEqual(result, { text: '{"a":1}', id: "x" });
-  assert.equal(sent.length, 2, "a resposta incompleta tem que ser repetida, não entregue");
-  assert.ok(
-    (sent[1]!["max_output_tokens"] as number) > (sent[0]!["max_output_tokens"] as number),
-    "a segunda tentativa precisa de mais espaço, senão corta de novo",
+  assert.ok(error instanceof Error, "um incomplete sem budget seguinte tem que virar erro");
+  assert.match(
+    error!.message,
+    /não coube em 64000 tokens/,
+    "a mensagem tem que nomear o teto e sugerir encurtar o pedido",
   );
+  assert.equal(sent.length, 1, "sem budget seguinte, não refaz a chamada");
 });
 
 test("a rejected reasoning effort walks down the ladder rather than failing the run", async () => {

@@ -26,7 +26,7 @@
  * sense with that look" is a property of the mode.
  */
 
-export const OUTPUT_MODES = ["mp4", "gif", "webp", "remotion"] as const;
+export const OUTPUT_MODES = ["mp4", "gif", "webp", "remotion", "mp4-silent"] as const;
 export type OutputMode = (typeof OUTPUT_MODES)[number];
 
 export function isOutputMode(s: string): s is OutputMode {
@@ -56,10 +56,14 @@ export const MODE_CAPS: Record<OutputMode, ModeCaps> = {
   // message — hence `caption`, which is written to stand alone mid-loop.
   gif: { voice: false, captureAudio: false, balloon: true, text: "caption", requiresPreset: "readme" },
   webp: { voice: false, captureAudio: false, balloon: true, text: "caption", requiresPreset: "readme" },
+  // Same silent contract as gif/webp, but the artefact is an H.264 MP4 — no
+  // palette, no frame budget, no time limit. The capture is re-encoded with a
+  // high CRF for a small file instead of being dropped through a fps ladder.
+  "mp4-silent": { voice: false, captureAudio: false, balloon: true, text: "caption", requiresPreset: "readme" },
   remotion: { voice: true, captureAudio: true, balloon: false, text: "say", requiresPreset: "comercial" },
 };
 
 /** The artefact's file extension. `remotion` delivers the MP4 plus a directory. */
 export function extensionFor(mode: OutputMode): string {
-  return mode === "remotion" ? "mp4" : mode;
+  return mode === "remotion" || mode === "mp4-silent" ? "mp4" : mode;
 }

@@ -23,7 +23,8 @@ import "./overlay-api.js"; // traz a declaração de `window.__demovid`
 import { chromeHeightPx, launchBrowser, setContentSize, type LaunchedBrowser } from "./browser.js";
 import { installEmulation } from "./emulate.js";
 import { synthesize, type Clip, type VoiceEngine } from "./openai/tts.js";
-import { encodeAnimation, type AnimationFormat } from "./gif.js";
+import { encodeAnimation, encodeSilentMp4 } from "./gif.js";
+import type { AnimationFormat } from "./gif.js";
 import { MODE_CAPS, type ModeCaps, type OutputMode } from "./output-mode.js";
 import { buildRemotionProject } from "./remotion/index.js";
 import { finalizeVideo, probeVideo, type VideoInfo } from "./postprocess.js";
@@ -374,11 +375,12 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
   // A repeat costs a redundant `querySelectorAll` on every poll of every settle.
   let loaders = [...new Set([...LOADING_SELECTORS, ...(opts.loadingSelectors ?? [])])];
 
-  // The recorder only ever writes an MP4; a GIF is a conversion of one. The
-  // intermediate is a dotfile beside the real output rather than in /tmp, so it
-  // lands on the same filesystem — a rename or a large write across devices is
-  // exactly where a 200 MB capture runs out of room in the least helpful way.
-  const capturePath = opts.animate
+  // The recorder only ever writes an MP4. Any format that re-encodes (gif, webp,
+  // mp4-silent) captures to a temp file first — the real output is written by the
+  // post-processor. The intermediate stays on the same filesystem as the output,
+  // because a cross-device rename is where a 200 MB capture runs out of room.
+  const needsReencode = opts.animate !== undefined || mode === "mp4-silent";
+  const capturePath = needsReencode
     ? join(dirname(opts.output), `.demovid-capture-${process.pid}.mp4`)
     : opts.output;
 
@@ -786,11 +788,11 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
           `${timeline.cuts.length} ponto(s) de corte)`,
       );
 
-      // ── 5. o GIF, quando foi ele o pedido ─────────────────────────────────
+      // ── 5. post-processing for formats that re-encode ───────────────────────
       //
-      // `buildTimeline` above deliberately used the *capture's* info: every
-      // timestamp in the sidecar is in capture time, and the animation's own
-      // frame rate is a property of the file, not of the clock.
+      // `buildTimeline` above used the *capture's* info: every timestamp in the
+      // sidecar is in capture time, and any frame rate is a property of the file,
+      // not of the clock.
       if (opts.animate) {
         const enc = await encodeAnimation({
           input: stopped.output,
@@ -810,6 +812,28 @@ export async function record(opts: RecordOptions): Promise<RecordReport> {
           warnings.push(w);
           log(`aviso: ${w}`);
         }
+
+        await rm(stopped.output, { force: true }).catch(() => {
+          warnings.push(`não consegui apagar a captura intermediária ${stopped.output}`);
+        });
+
+        return {
+          output: opts.output,
+          bytes: enc.bytes,
+          steps,
+          cameraRung,
+          warnings,
+          video: await probeVideo(opts.output),
+          timeline: timelinePath,
+        };
+      }
+
+      if (mode === "mp4-silent") {
+        const enc = await encodeSilentMp4({
+          input: stopped.output,
+          output: opts.output,
+          onLog: log,
+        });
 
         await rm(stopped.output, { force: true }).catch(() => {
           warnings.push(`não consegui apagar a captura intermediária ${stopped.output}`);
