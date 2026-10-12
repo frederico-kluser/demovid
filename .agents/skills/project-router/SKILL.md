@@ -62,7 +62,7 @@ Ordering rules, from `.agents/bootstrap/skill-map.md`:
 - `following-typescript-conventions` on any `.ts` edit, in parallel with the domain skill.
 - The domain skills are independent and may load in parallel.
 - `testing-demovid` **after** the domain skill, when the change needs a test.
-- `meta-skill-evolution` **last, always**.
+- a memória CoALA local (`coala.py add`) **last, always**.
 
 Two pairs are easy to route to the wrong half, because in each case one skill decides
 something and the other consumes it:
@@ -90,12 +90,12 @@ rediscover them.
 
 ### 7. On completion
 
-1. Run each involved task skill's `<evolution>` step — the pipeline in `meta-skill-evolution`.
+1. Run each involved task skill's learning step (memória CoALA local) — the pipeline of the local CoALA memory (`coala.py add`).
 2. **Delete `TASK_PLAN.md`.** It is disposable and must not survive the task.
 
 ## Rules
 
-- If no skill covers the task, invoke `meta-skill-evolution` to **propose** a new one as a draft for
+- If no skill covers the task, invoke the local CoALA memory (`coala.py add`) to **propose** a new one as a draft for
   human review. Never publish a skill directly.
 - Skills with broad side effects — a recording that takes over the screen, a structural change, a
   deploy — are not auto-invoked without confirming with the user first.

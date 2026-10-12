@@ -129,8 +129,8 @@ strings, so the injected overlay ships **zero animation JS**
 
 - `README.md` — the same findings, written for someone outside the project.
 
-## <evolution>
+## registo de aprendizado (memória CoALA local)
 
-On task completion, run the memory pipeline in `meta-skill-evolution`. A TTS claim that needs a paid
+On task completion, run the memory pipeline of the local CoALA memory (`coala.py add`). A TTS claim that needs a paid
 API call to verify is not gated by `npm test`; either add a unit-testable consequence or record it as
 unverified rather than persisting it as fact.

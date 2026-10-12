@@ -137,7 +137,7 @@ re-mount.
 - `.agents/bootstrap/project-analysis.md` §5 — the subsystem map.
 - `test/stage.e2e.mjs` — read it to see which behaviours are already pinned.
 
-## <evolution>
+## registo de aprendizado (memória CoALA local)
 
-On task completion, run the memory pipeline in `meta-skill-evolution`. This skill's claims are gated
+On task completion, run the memory pipeline of the local CoALA memory (`coala.py add`). This skill's claims are gated
 by `npm run test:e2e`; a camera claim that no browser test can reach does not belong here.

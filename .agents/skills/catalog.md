@@ -93,13 +93,13 @@ Carries the measured constraints of demovid's in-page camera and overlay — why
 
 ## Meta — the memory pipeline
 
-### `meta-skill-consolidate`
+### a memória CoALA local (supersessão por `--key`)
 
 Periodic garbage collection for the skill library — deduplicates overlapping passages, resolves contradictions, detects knowledge gone stale because the code it cites moved, enforces the token budget, and retires content that no longer earns its place. Use whenever a skill's claims fail verification, whenever two skills seem to say the same thing, whenever routing feels ambiguous or a must_trigger query ties, whenever the catalog has grown past roughly a dozen skills, and on a periodic schedule even with no visible symptom. Deletion here is irreversible in effect even when git can undo it, so every removal needs a second opinion and the user's confirmation.
 
 *Verified by:* `node .agents/scripts/skill-verify.mjs --all`
 
-### `meta-skill-evolution`
+### a memória CoALA local (`coala.py add`)
 
 Decides what happens to something learned during a task — update an existing skill, propose a new one as a draft, or discard it — and runs the five-step memory pipeline that gates any persisted write. Use at the end of every task without exception, and use it whenever you are tempted to write anything into a SKILL.md, whenever a task revealed a constraint no skill covers, or whenever an existing skill turned out to be wrong. Discarding is the common and correct outcome; treat a write as the exception that must be argued for.
 
@@ -107,7 +107,7 @@ Decides what happens to something learned during a task — update an existing s
 
 ## How an update gets persisted
 
-A skill is edited only through the pipeline in `meta-skill-evolution`, and only when an objective
+A skill is edited only through the pipeline of the local CoALA memory (`coala.py add`), and only when an objective
 signal external to the model agrees. The reason is that importance and truth are different things:
 a lean, well-scoped, correctly-cited rule can still be false, and once written it gets retrieved on
 similar tasks and followed. Defaulting to writing nothing is the safe failure.

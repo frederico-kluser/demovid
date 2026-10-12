@@ -236,9 +236,9 @@ length equals the number that was budgeted.
 - `templates/remotion/README.md` — the operator-facing version, in Portuguese.
 - Remotion is not MIT: a paid company licence is required at four or more people.
 
-## <evolution>
+## registo de aprendizado (memória CoALA local)
 
-On task completion, run the memory pipeline in `meta-skill-evolution`. Gated by `npm
+On task completion, run the memory pipeline of the local CoALA memory (`coala.py add`). Gated by `npm
 test`. The bar here is specific, because this template's failures are the ones that
 render *fine*: a finding earns a place only when it names something a green render would
 still have got wrong, and when a command could have proved it wrong. Every number above

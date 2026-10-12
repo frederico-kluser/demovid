@@ -28,7 +28,7 @@ survived verification**. What came back was marketing-blog statistics with no tr
 primary source, restated between blogs until they read as consensus.
 
 So none of it is written here, and it should not be added later without a citation that
-resolves to a primary source with a sample size. `meta-skill-evolution` step 2 is the
+resolves to a primary source with a sample size. a memória CoALA local (`coala.py add`) step 2 is the
 rule being followed: importance is not truth, and a plausible number written into memory
 gets retrieved and followed on every future demo.
 
@@ -144,9 +144,9 @@ inter-frame compression.
   why `required` order makes the model commit to mechanics before copy.
 - `synthesizing-narration` — the wpm ceiling and what the `speed` parameter does above it.
 
-## <evolution>
+## registo de aprendizado (memória CoALA local)
 
-On task completion, run the memory pipeline in `meta-skill-evolution`. Gated by
+On task completion, run the memory pipeline of the local CoALA memory (`coala.py add`). Gated by
 `npm test`, and with one extra bar specific to this skill: **a claim about what makes a
 demo good needs a source outside the model, or it does not go in.** This subject attracts
 confident, unsourced numbers more than any other in the repository — the first research

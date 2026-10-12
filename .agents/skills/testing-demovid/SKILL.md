@@ -114,7 +114,7 @@ to 15 characters, which is why the pattern above is anchored and short.
 
 - `.agents/bootstrap/project-analysis.md` §6 — the full test topology.
 
-## <evolution>
+## registo de aprendizado (memória CoALA local)
 
-On task completion, run the memory pipeline in `meta-skill-evolution`. Gated by `npm run verify`. A
+On task completion, run the memory pipeline of the local CoALA memory (`coala.py add`). Gated by `npm run verify`. A
 claim about what a test proves must itself be demonstrated by a run, not asserted.

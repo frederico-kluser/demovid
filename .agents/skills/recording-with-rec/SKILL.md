@@ -149,8 +149,8 @@ demovid draws its own cursor.
 - `test/recorder.test.ts` — argument construction and the `/proc` readers.
 - `test/record.e2e.ts` — the real capture; `DEMOVID_RECORDER=ffmpeg` exercises the fallback.
 
-## <evolution>
+## registo de aprendizado (memória CoALA local)
 
-On task completion, run the memory pipeline in `meta-skill-evolution`. Update this file only when
+On task completion, run the memory pipeline of the local CoALA memory (`coala.py add`). Update this file only when
 `npm run test:record` is green against the change — a signal-free claim about process semantics is
 exactly the kind of write this system exists to refuse.

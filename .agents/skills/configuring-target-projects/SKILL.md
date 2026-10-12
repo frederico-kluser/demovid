@@ -155,7 +155,7 @@ owns — so naming them is what lets the operator run `git diff` and decide.
 - `AGENTS.md` — the always-on statements of these rules.
 - `understanding-demovid-architecture` — who owns what across `src/project/`.
 
-## <evolution>
+## registo de aprendizado (memória CoALA local)
 
-On task completion, run the memory pipeline in `meta-skill-evolution`. Gated by `npm test`. A claim
+On task completion, run the memory pipeline of the local CoALA memory (`coala.py add`). Gated by `npm test`. A claim
 about detection must come from a project that actually failed, not from a framework's documentation.

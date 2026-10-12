@@ -131,8 +131,8 @@ text. Losing a finished recording because the *caption writer* failed is the wor
 - `src/timeline.ts` — `scoreCuts` and what each penalty means.
 - `composing-remotion-videos` — the other half: what the renderer does with this document.
 
-## <evolution>
+## registo de aprendizado (memória CoALA local)
 
-On task completion, run the memory pipeline in `meta-skill-evolution`. Gated by `npm test`: a claim
+On task completion, run the memory pipeline of the local CoALA memory (`coala.py add`). Gated by `npm test`: a claim
 about cut placement that no unit test can fail is a hypothesis, not a finding — the boundary rules are
 cheap to assert, so assert them instead of writing them here.

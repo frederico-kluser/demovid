@@ -119,8 +119,8 @@ reach for a bundler anywhere else — nothing else needs one.
 
 - `.agents/bootstrap/project-analysis.md` §2–§4 — the full tooling/prose split with every call site.
 
-## <evolution>
+## registo de aprendizado (memória CoALA local)
 
-On task completion, run the memory pipeline in `meta-skill-evolution`. Update this file directly only
+On task completion, run the memory pipeline of the local CoALA memory (`coala.py add`). Update this file directly only
 when a convention actually changed and `npm run build` is green — a style preference with no external
 signal is exactly the kind of write this system exists to refuse.

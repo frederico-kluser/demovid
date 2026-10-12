@@ -142,7 +142,7 @@ the same change, or do not add it.
 
 - `examples/demo.yaml` — the shape a user actually writes.
 
-## <evolution>
+## registo de aprendizado (memória CoALA local)
 
-On task completion, run the memory pipeline in `meta-skill-evolution`. Gated by `npm test`; a schema
+On task completion, run the memory pipeline of the local CoALA memory (`coala.py add`). Gated by `npm test`; a schema
 claim with no test is not persisted here.

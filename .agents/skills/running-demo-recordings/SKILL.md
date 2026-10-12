@@ -112,8 +112,8 @@ heavier dim, larger text). `--camera` only to force a rung; `auto` decides durin
 - `README.md` — requirements, and the `gpu-screen-recorder` command to substitute if the `rec`
   wrapper is not installed.
 
-## <evolution>
+## registo de aprendizado (memória CoALA local)
 
-On task completion, run the memory pipeline in `meta-skill-evolution`. Operating knowledge is
+On task completion, run the memory pipeline of the local CoALA memory (`coala.py add`). Operating knowledge is
 verified by `demovid doctor` plus the run itself having produced a playable file — an unreproduced
 troubleshooting guess is not persisted.
